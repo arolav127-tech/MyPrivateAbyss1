@@ -406,40 +406,189 @@ App:BindRender("esp",Enum.RenderPriority.Camera.Value+2,function()
 end)
 
 -- movement
-local MV={origWalk=nil,fly=nil,ncOn=false,lastJump=0,lastBhop=0}
-local function destroyFly() if MV.fly then pcall(function() MV.fly.lv:Destroy() end) pcall(function() MV.fly.ao:Destroy() end) pcall(function() MV.fly.att:Destroy() end) MV.fly=nil end
-local function createFly(root)
-	destroyFly()
-	local att=Instance.new("Attachment") att.Parent=root
-	local lv=Instance.new("LinearVelocity") lv.Attachment0=att lv.MaxForce=math.huge lv.VelocityConstraintMode=Enum.VelocityConstraintMode.Vector lv.VectorVelocity=Vector3.zero lv.Parent=root
-	local ao=Instance.new("AlignOrientation") ao.Attachment0=att ao.MaxTorque=math.huge ao.Responsiveness=200 ao.Mode=Enum.OrientationAlignmentMode.OneAttachment ao.Parent=root
-	MV.fly={att=att,lv=lv,ao=ao}
+local MV = {
+    origWalk = nil,
+    fly = nil,
+    ncOn = false,
+    lastJump = 0,
+    lastBhop = 0
+}
+
+local function destroyFly()
+    if MV.fly then
+        pcall(function()
+            MV.fly.lv:Destroy()
+        end)
+
+        pcall(function()
+            MV.fly.ao:Destroy()
+        end)
+
+        pcall(function()
+            MV.fly.att:Destroy()
+        end)
+
+        MV.fly = nil
+    end
 end
-App:Connect(LP.CharacterAdded,function() MV.origWalk=nil destroyFly() MV.ncOn=false end)
-App:Connect(RS.Heartbeat,function(dt)
-	local lc=localRec() if not lc or not lc.alive or not lc.hum or not lc.root then return end
-	local hum,root=lc.hum,lc.root
-	if S.Move.Speed then
-		if MV.origWalk==nil then MV.origWalk=hum.WalkSpeed end
-		if S.Move.SpeedMode=="Walk" then if hum.WalkSpeed~=S.Move.SpeedValue then hum.WalkSpeed=S.Move.SpeedValue end
-		else local md=hum.MoveDirection if md.Magnitude>0.1 then local v=root.AssemblyLinearVelocity root.AssemblyLinearVelocity=Vector3.new(md.X*S.Move.SpeedValue,v.Y,md.Z*S.Move.SpeedValue) end end
-	elseif MV.origWalk then if hum.WalkSpeed~=MV.origWalk then hum.WalkSpeed=MV.origWalk end MV.origWalk=nil end
-	if S.Move.NoClip~=MV.ncOn then
-		if lc.char then for _,part in ipairs(lc.char:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide=not S.Move.NoClip end end end
-		MV.ncOn=S.Move.NoClip
-	end
-	if S.Move.InfJump and UIS:IsKeyDown(Enum.KeyCode.Space) and tick()-MV.lastJump>0.22 then hum:ChangeState(Enum.HumanoidStateType.Jumping) MV.lastJump=tick() end
-	if S.Move.Bhop and UIS:IsKeyDown(Enum.KeyCode.Space) then local s=hum:GetState() if s==Enum.HumanoidStateType.Landed or s==Enum.HumanoidStateType.Running or s==Enum.HumanoidStateType.RunningNoPhysics then hum:ChangeState(Enum.HumanoidStateType.Jumping) end end
-	if S.Move.Fly then
-		if not MV.fly or not (MV.fly.lv and MV.fly.lv.Parent==root) then createFly(root) end
-		local move=Vector3.zero
-		if cam then local look,right=cam.CFrame.LookVector,cam.CFrame.RightVector
-			if UIS:IsKeyDown(Enum.KeyCode.W) then move=move+look end if UIS:IsKeyDown(Enum.KeyCode.S) then move=move-look end
-			if UIS:IsKeyDown(Enum.KeyCode.A) then move=move-right end if UIS:IsKeyDown(Enum.KeyCode.D) then move=move+right end end
-		if UIS:IsKeyDown(Enum.KeyCode.Space) then move=move+Vector3.new(0,1,0) end
-		if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then move=move-Vector3.new(0,1,0) end
-		if MV.fly then MV.fly.lv.VectorVelocity=(move.Magnitude>0) and (move.Unit*S.Move.FlyValue) or Vector3.zero if cam then MV.fly.ao.CFrame=cam.CFrame end end
-	else destroyFly() end
+
+local function createFly(root)
+    destroyFly()
+
+    local att = Instance.new("Attachment")
+    att.Parent = root
+
+    local lv = Instance.new("LinearVelocity")
+    lv.Attachment0 = att
+    lv.MaxForce = math.huge
+    lv.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+    lv.VectorVelocity = Vector3.zero
+    lv.Parent = root
+
+    local ao = Instance.new("AlignOrientation")
+    ao.Attachment0 = att
+    ao.MaxTorque = math.huge
+    ao.Responsiveness = 200
+    ao.Mode = Enum.OrientationAlignmentMode.OneAttachment
+    ao.Parent = root
+
+    MV.fly = {
+        att = att,
+        lv = lv,
+        ao = ao
+    }
+end
+
+App:Connect(LP.CharacterAdded, function()
+    MV.origWalk = nil
+    destroyFly()
+    MV.ncOn = false
+end)
+
+App:Connect(RS.Heartbeat, function(dt)
+    local lc = localRec()
+
+    if not lc or not lc.alive or not lc.hum or not lc.root then
+        return
+    end
+
+    local hum, root = lc.hum, lc.root
+
+    if S.Move.Speed then
+        if MV.origWalk == nil then
+            MV.origWalk = hum.WalkSpeed
+        end
+
+        if S.Move.SpeedMode == "Walk" then
+            if hum.WalkSpeed ~= S.Move.SpeedValue then
+                hum.WalkSpeed = S.Move.SpeedValue
+            end
+        else
+            local md = hum.MoveDirection
+
+            if md.Magnitude > 0.1 then
+                local v = root.AssemblyLinearVelocity
+
+                root.AssemblyLinearVelocity = Vector3.new(
+                    md.X * S.Move.SpeedValue,
+                    v.Y,
+                    md.Z * S.Move.SpeedValue
+                )
+            end
+        end
+    elseif MV.origWalk then
+        if hum.WalkSpeed ~= MV.origWalk then
+            hum.WalkSpeed = MV.origWalk
+        end
+
+        MV.origWalk = nil
+    end
+
+    if S.Move.NoClip ~= MV.ncOn then
+        if lc.char then
+            for _, part in ipairs(lc.char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = not S.Move.NoClip
+                end
+            end
+        end
+
+        MV.ncOn = S.Move.NoClip
+    end
+
+    if S.Move.InfJump
+        and UIS:IsKeyDown(Enum.KeyCode.Space)
+        and tick() - MV.lastJump > 0.22
+    then
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        MV.lastJump = tick()
+    end
+
+    if S.Move.Bhop and UIS:IsKeyDown(Enum.KeyCode.Space) then
+        local s = hum:GetState()
+
+        if s == Enum.HumanoidStateType.Landed
+            or s == Enum.HumanoidStateType.Running
+            or s == Enum.HumanoidStateType.RunningNoPhysics
+        then
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+
+    if S.Move.Fly then
+        if not MV.fly
+            or not MV.fly.lv
+            or MV.fly.lv.Parent ~= root
+        then
+            createFly(root)
+        end
+
+        local move = Vector3.zero
+
+        if cam then
+            local look = cam.CFrame.LookVector
+            local right = cam.CFrame.RightVector
+
+            if UIS:IsKeyDown(Enum.KeyCode.W) then
+                move = move + look
+            end
+
+            if UIS:IsKeyDown(Enum.KeyCode.S) then
+                move = move - look
+            end
+
+            if UIS:IsKeyDown(Enum.KeyCode.A) then
+                move = move - right
+            end
+
+            if UIS:IsKeyDown(Enum.KeyCode.D) then
+                move = move + right
+            end
+        end
+
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then
+            move = move + Vector3.new(0, 1, 0)
+        end
+
+        if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
+            move = move - Vector3.new(0, 1, 0)
+        end
+
+        if MV.fly then
+            if move.Magnitude > 0 then
+                MV.fly.lv.VectorVelocity =
+                    move.Unit * S.Move.FlyValue
+            else
+                MV.fly.lv.VectorVelocity = Vector3.zero
+            end
+
+            if cam then
+                MV.fly.ao.CFrame = cam.CFrame
+            end
+        end
+    else
+        destroyFly()
+    end
 end)
 
 -- antiaim
