@@ -1,28 +1,31 @@
+-- abyss // unknown v13 (non-blocking boot)
 local RS=game:GetService("RunService")
 local Players=game:GetService("Players")
 local UIS=game:GetService("UserInputService")
 local TWS=game:GetService("TweenService")
 local HS=game:GetService("HttpService")
 local WS=game:GetService("Workspace")
-local Lighting=game:GetService("Lighting")
-local VirtualUser=game:GetService("VirtualUser")
 local CoreGui=game:GetService("CoreGui")
+local VirtualUser=game:GetService("VirtualUser")
 if not RS:IsClient() then return end
-local LP=Players.LocalPlayer or Players.PlayerAdded:Wait()
+local LP=Players.LocalPlayer
+if not LP then
+	local ok,p=pcall(function() return Players.PlayerAdded:Wait() end)
+	if not ok then return end
+	LP=p
+end
 
 local ENV=(type(getgenv)=="function" and getgenv()) or _G
 if type(ENV.__ABYSS)=="table" and type(ENV.__ABYSS.Unload)=="function" then pcall(ENV.__ABYSS.Unload) end
 ENV.__ABYSS=nil
 
--- scope
 local scopes={}
 local function newScope(name)
 	local s={name=name,alive=true,conns={},insts={},fns={},renders={}}
 	function s:Connect(sig,fn) if not self.alive then return nil end local c=sig:Connect(fn) self.conns[#self.conns+1]=c return c end
 	function s:Give(i) if not self.alive then pcall(function() i:Destroy() end) return i end self.insts[#self.insts+1]=i return i end
 	function s:Add(fn) if not self.alive then pcall(fn) return end self.fns[#self.fns+1]=fn end
-	function s:BindRender(key,prio,fn) if not self.alive then return end local nm="ABYSS_"..key self.renders[#self.renders+1]=nm
-		pcall(function() RS:BindToRenderStep(nm,prio,function(dt) if self.alive then pcall(fn,dt) end end) end) end
+	function s:BindRender(key,prio,fn) if not self.alive then return end local nm="ABYSS_"..key self.renders[#self.renders+1]=nm pcall(function() RS:BindToRenderStep(nm,prio,function(dt) if self.alive then pcall(fn,dt) end end) end) end
 	function s:Destroy()
 		if not self.alive then return end self.alive=false
 		for _,c in ipairs(self.conns) do pcall(function() if c.Connected then c:Disconnect() end end) end
@@ -34,24 +37,20 @@ local function newScope(name)
 end
 local App=newScope("app")
 
--- settings
 local S={
 	Aimbot={Enabled=false,Silent=false,FOV=120,Smoothing=5,Prediction=0.12,WallCheck=true,OnlyEnemies=true,ShowFOV=true,HitChance=100,Humanizer=0.4},
 	Trigger={Enabled=false,OnlyEnemies=true,WallCheck=true,Cooldown=0.15},
 	ESP={Enabled=false,Boxes=true,HealthBar=true,Snaplines=false,Names=true,Distance=false,Chams=false,OnlyEnemies=true,MaxDistance=500},
 	Move={Speed=false,SpeedMode="Walk",SpeedValue=50,Fly=false,FlyValue=60,NoClip=false,InfJump=false,Bhop=false},
 	AA={Jitter=false,JitterAngle=40,Desync=false,DesyncMode="Spin",DesyncSpeed=30,HideHead=false,HideHeadMode="Back",FakeLag=false,FakeLagIntensity=5,FakeLagFrequency=1},
-	Rage={Enabled=false,MassFling=false,FlingTarget="Nearest",VoidTP=false,LagMachine=false,Unanchor=false},
+	Rage={Enabled=false,MassFling=false,FlingTarget="Nearest",VoidTP=false,Spinbot=false,SpinSpeed=25},
 	Misc={Watermark=true,KeybindDisplay=true,AntiAFK=true,PanicKey="End"},
-	Keys={UI="RightShift",Aimbot="X",Silent="B",Fly="F",Speed="V",ESP="E"},
+	Keys={UI="RightShift",Aimbot="X",Silent="B",Fly="F",Speed="V"},
 }
-local DANGEROUS={"Aimbot.Enabled","Aimbot.Silent","Trigger.Enabled","ESP.Enabled","ESP.Chams","Move.Speed","Move.Fly","Move.NoClip","Move.InfJump","Move.Bhop","AA.Jitter","AA.Desync","AA.HideHead","AA.FakeLag","Rage.Enabled","Rage.MassFling","Rage.VoidTP","Rage.LagMachine","Rage.Unanchor"}
 local UIRefs={}
-
--- fs + config
-local function fsOk() return type(writefile)=="function" and type(readfile)=="function" and type(isfile)=="function" and type(makefolder)=="function" and type(isfolder)=="function" end
-local CFGPATH="AbyssFW/unknown_v12.json"
 local saveQueued=false
+local CFGPATH="AbyssFW/unknown_v13.json"
+local function fsOk() return type(writefile)=="function" and type(readfile)=="function" and type(isfile)=="function" and type(makefolder)=="function" and type(isfolder)=="function" end
 local function saveConfig()
 	if not fsOk() then return end
 	pcall(function()
@@ -65,21 +64,25 @@ local function queueSave()
 end
 local function loadConfig()
 	if not fsOk() or not isfile(CFGPATH) then return end
-	local ok,data=pcall(function() return HS:JSONDecode(readfile(CFGPATH)) end)
-	if not ok or type(data)~="table" then return end
+	local ok,txt=pcall(readfile,CFGPATH)
+	if not ok or type(txt)~="string" then return end
+	local ok2,data=pcall(function() return HS:JSONDecode(txt) end)
+	if not ok2 or type(data)~="table" then return end
 	for g,t in pairs(S) do
 		if type(data[g])=="table" then for k in pairs(t) do if data[g][k]~=nil then t[k]=data[g][k] end end end
 	end
 end
 local function G(path) local g,k=path:match("^(%w+)%.(%w+)$") local t=S[g] if t then return t[k] end return nil end
-local function Set(path,v)
-	local g,k=path:match("^(%w+)%.(%w+)$") local t=S[g] if t then t[k]=v end
-	for _,fn in ipairs(UIRefs[path] or {}) do pcall(fn,v) end
-	queueSave()
+local function Set(path,value,skipSave)
+	local g,k=path:match("^(%w+)%.(%w+)$") local t=S[g] if t then t[k]=value end
+	for _,fn in ipairs(UIRefs[path] or {}) do pcall(fn,value) end
+	if not skipSave then queueSave() end
 end
 
--- player cache
+-- cache
 local Cache={byPlayer={}}
+local cam=WS.CurrentCamera
+App:Connect(WS:GetPropertyChangedSignal("CurrentCamera"),function() cam=WS.CurrentCamera end)
 local function recomputeEnemy(rec)
 	if rec.plr==LP then rec.enemy=false return end
 	local m,t=LP.Team,rec.plr.Team
@@ -106,7 +109,7 @@ local function wire(plr)
 	rec.pscope=newScope("plr:"..plr.Name)
 	Cache.byPlayer[plr]=rec
 	rec.pscope:Connect(plr.CharacterAdded,function(c) onCharAdded(rec,c) end)
-	rec.pscope:Connect(plr.CharacterRemoving,function() rec.alive=false rec.char=nil rec.hum=nil rec.root=nil rec.head=nil if rec.cscope then rec.cscope:Destroy() rec.cscope=nil end end)
+	rec.pscope:Connect(plr.CharacterRemoving,function() rec.char=nil rec.hum=nil rec.root=nil rec.head=nil rec.alive=false if rec.cscope then rec.cscope:Destroy() rec.cscope=nil end end)
 	rec.pscope:Connect(plr:GetPropertyChangedSignal("Team"),function() for _,r in pairs(Cache.byPlayer) do recomputeEnemy(r) end end)
 	if plr.Character then onCharAdded(rec,plr.Character) end
 end
@@ -123,13 +126,19 @@ local function acquire(k) if not drawingAvailable then return nil end local list
 local function release(o,k) if not o then return end pcall(function() o.Visible=false end) Pool.free[k][#Pool.free[k]+1]=o end
 local function nukePool() for _,list in pairs(Pool.free) do for _,o in ipairs(list) do pcall(function() o:Remove() end) end table.clear(list) end end
 
--- GUI root (PlayerGui first)
+----------------------------------------------------------------
+-- GUI (создаётся НЕМЕДЛЕННО, без ожидания character)
+----------------------------------------------------------------
+local COL={bg=Color3.fromRGB(12,12,14),panel=Color3.fromRGB(18,18,21),elem=Color3.fromRGB(24,24,28),stroke=Color3.fromRGB(38,38,44),text=Color3.fromRGB(235,235,240),muted=Color3.fromRGB(120,120,130),accent=Color3.fromRGB(255,60,60),off=Color3.fromRGB(70,70,78)}
 local guiParent
 do
-	local ok,pg=pcall(function() return LP:WaitForChild("PlayerGui",5) end)
-	if ok and pg then guiParent=pg
-	elseif type(gethui)=="function" then local ok2,h=pcall(gethui) guiParent=(ok2 and h) or CoreGui
-	else guiParent=CoreGui end
+	local ok,t=nil,nil
+	if type(gethui)=="function" then ok,t=pcall(gethui) end
+	if ok and t then guiParent=t
+	else
+		ok,t=pcall(function() return LP:WaitForChild("PlayerGui",5) end)
+		guiParent=(ok and t) or CoreGui
+	end
 end
 pcall(function() for _,g in ipairs(guiParent:GetChildren()) do if g:GetAttribute("AbyssUI") then g:Destroy() end end end)
 local gui=App:Give(Instance.new("ScreenGui"))
@@ -138,22 +147,21 @@ pcall(function() gui:SetAttribute("AbyssUI",true) end)
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=false
 gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
-gui.DisplayOrder=64
+gui.DisplayOrder=100
 gui.Enabled=true
 pcall(function() gui.Parent=guiParent end)
 
-local COL={bg=Color3.fromRGB(12,12,14),panel=Color3.fromRGB(18,18,21),elem=Color3.fromRGB(24,24,28),stroke=Color3.fromRGB(38,38,44),text=Color3.fromRGB(235,235,240),muted=Color3.fromRGB(120,120,130),accent=Color3.fromRGB(255,60,60),off=Color3.fromRGB(70,70,78)}
 local function new(cls,props,parent) local o=Instance.new(cls) if props then for k,v in pairs(props) do pcall(function() o[k]=v end) end end if parent then pcall(function() o.Parent=parent end) end return o end
 local function corner(p,r) return new("UICorner",{CornerRadius=UDim.new(0,r or 8)},p) end
 local function stroke(p,c,t) return new("UIStroke",{Color=c or COL.stroke,Thickness=t or 1},p) end
-local function tween(o,t,pr) if not o or not o.Parent then return end pcall(function() TWS:Create(o,TweenInfo.new(t or 0.16,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),pr):Play() end) end
 
-local main=new("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.5,0),Size=UDim2.fromOffset(560,480),BackgroundColor3=COL.bg,BorderSizePixel=0,ClipsDescendants=true,Visible=true},gui)
+local main=new("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.5,0),Size=UDim2.fromOffset(560,460),BackgroundColor3=COL.bg,BorderSizePixel=0,ClipsDescendants=true,Visible=true},gui)
 corner(main,10) stroke(main)
 local topbar=new("Frame",{Size=UDim2.new(1,0,0,44),BackgroundColor3=COL.panel,BorderSizePixel=0},main)
 corner(topbar,10)
 new("Frame",{Size=UDim2.new(1,0,0,10),Position=UDim2.new(0,0,1,-10),BackgroundColor3=COL.panel,BorderSizePixel=0},topbar)
-new("TextLabel",{Size=UDim2.new(1,-150,0,20),Position=UDim2.fromOffset(22,12),BackgroundTransparency=1,Text="unknown",Font=Enum.Font.Code,TextSize=16,TextColor3=COL.text,TextXAlignment=Enum.TextXAlignment.Left},topbar)
+new("Frame",{Size=UDim2.fromOffset(3,14),Position=UDim2.fromOffset(12,15),BackgroundColor3=COL.accent,BorderSizePixel=0},topbar)
+new("TextLabel",{Size=UDim2.fromOffset(160,20),Position=UDim2.fromOffset(22,12),BackgroundTransparency=1,Text="unknown",Font=Enum.Font.Code,TextSize=16,TextColor3=COL.text,TextXAlignment=Enum.TextXAlignment.Left},topbar)
 local hideBtn=new("TextButton",{Size=UDim2.fromOffset(24,24),Position=UDim2.new(1,-32,0.5,-12),BackgroundColor3=COL.elem,BorderSizePixel=0,Text="x",TextColor3=COL.text,Font=Enum.Font.GothamBold,TextSize=11,AutoButtonColor=false},topbar) corner(hideBtn,6)
 local sidebar=new("Frame",{Size=UDim2.new(0,120,1,-52),Position=UDim2.fromOffset(8,48),BackgroundColor3=COL.panel,BorderSizePixel=0},main) corner(sidebar,8)
 local tabList=new("ScrollingFrame",{Size=UDim2.new(1,-8,1,-8),Position=UDim2.fromOffset(4,4),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=0,CanvasSize=UDim2.new()},sidebar)
@@ -161,17 +169,13 @@ local tabLayout=new("UIListLayout",{Padding=UDim.new(0,4),SortOrder=Enum.SortOrd
 App:Connect(tabLayout:GetPropertyChangedSignal("AbsoluteContentSize"),function() tabList.CanvasSize=UDim2.fromOffset(0,tabLayout.AbsoluteContentSize.Y+4) end)
 local pages=new("Frame",{Size=UDim2.new(1,-132,1,-52),Position=UDim2.fromOffset(128,48),BackgroundTransparency=1},main)
 
-local openPopups={}
-local function closePopups() for i=#openPopups,1,-1 do pcall(function() openPopups[i].Visible=false end) end openPopups={} end
 local tabs,selectedTab={},nil
-local function selectTab(rec) selectedTab=rec closePopups()
-	for _,t in ipairs(tabs) do local sel=(t==rec) t.page.Visible=sel t.btn.BackgroundColor3=sel and COL.elem or COL.panel t.btn.TextColor3=sel and COL.text or COL.muted end end
-
+local function selectTab(rec) selectedTab=rec for _,t in ipairs(tabs) do local sel=(t==rec) t.page.Visible=sel t.btn.BackgroundColor3=sel and COL.elem or COL.panel t.btn.TextColor3=sel and COL.text or COL.muted end end
 local function addTab(name)
 	local page=new("ScrollingFrame",{BackgroundTransparency=1,BorderSizePixel=0,Size=UDim2.new(1,0,1,0),ScrollBarThickness=3,ScrollBarImageColor3=COL.stroke,Visible=false,CanvasSize=UDim2.new()},pages)
 	local layout=new("UIListLayout",{Padding=UDim.new(0,5),SortOrder=Enum.SortOrder.LayoutOrder},page)
 	new("UIPadding",{PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,8),PaddingLeft=UDim.new(0,4),PaddingRight=UDim.new(0,6)},page)
-	App:Connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"),function() page.CanvasSize=UDim2.fromOffset(0,layout.AbsoluteContentSize.Y+16) closePopups() end)
+	App:Connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"),function() page.CanvasSize=UDim2.fromOffset(0,layout.AbsoluteContentSize.Y+16) end)
 	local btn=new("TextButton",{Size=UDim2.new(1,0,0,30),BackgroundColor3=COL.panel,BorderSizePixel=0,Text=name,TextColor3=COL.muted,Font=Enum.Font.GothamMedium,TextSize=12,AutoButtonColor=false},tabList) corner(btn,6)
 	local rec={name=name,page=page,btn=btn} table.insert(tabs,rec)
 	App:Connect(btn.MouseButton1Click,function() selectTab(rec) end)
@@ -183,14 +187,15 @@ local function addTab(name)
 	local function hoverize(f) App:Connect(f.MouseEnter,function() f.BackgroundColor3=Color3.fromRGB(30,30,35) end) App:Connect(f.MouseLeave,function() f.BackgroundColor3=COL.elem end) end
 	local function addClick(f,cb) local o=new("TextButton",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text="",AutoButtonColor=false,ZIndex=5},f) App:Connect(o.MouseButton1Click,function() pcall(cb) end) return o end
 	function Tab:Section(t) order=order+1 new("TextLabel",{Size=UDim2.new(1,0,0,18),BackgroundTransparency=1,Text=t,TextXAlignment=Enum.TextXAlignment.Left,TextColor3=COL.muted,Font=Enum.Font.GothamSemibold,TextSize=11,LayoutOrder=order},page) end
-	function Tab:Label(t) local f=row(26) local l=rtitle(f,t) l.Size=UDim2.new(1,-14,1,0) l.TextColor3=COL.muted hoverize(f) return {Set=function(_,v) l.Text=tostring(v) end} end
-	function Tab:Button(o) o=o or{} local f=row(30) local l=rtitle(f,o.Name or "Button") l.Size=UDim2.new(1,-14,1,0) hoverize(f) addClick(f,o.Callback) return {Set=function(_,v) l.Text=tostring(v) end} end
+	function Tab:Label(t,desc) local f=row(26) local l=rtitle(f,t) l.Size=UDim2.new(1,-14,1,0) l.TextColor3=COL.muted hoverize(f) if desc then hookTip(f,desc) end return {Set=function(_,v) l.Text=tostring(v) end} end
+	function Tab:Button(o) o=o or{} local f=row(30) local l=rtitle(f,o.Name or "Button") l.Size=UDim2.new(1,-14,1,0) hoverize(f) addClick(f,o.Callback) if o.Desc then hookTip(f,o.Desc) end return {Set=function(_,v) l.Text=tostring(v) end} end
 	function Tab:Toggle(o) o=o or{} local state=G(o.Path)==true local f=row(30) hoverize(f) rtitle(f,o.Name)
 		local sw=new("Frame",{Size=UDim2.fromOffset(34,16),Position=UDim2.new(1,-42,0.5,-8),BackgroundColor3=COL.bg,BorderSizePixel=0},f) corner(sw,8) stroke(sw)
 		local ind=new("Frame",{Size=UDim2.fromOffset(10,10),AnchorPoint=Vector2.new(0,0.5),BackgroundColor3=state and COL.accent or COL.off,BorderSizePixel=0},sw) corner(ind,6)
 		local function paint(v) ind.BackgroundColor3=v and COL.accent or COL.off ind.Position=v and UDim2.new(1,-13,0.5,0) or UDim2.new(0,3,0.5,0) end
 		UIRefs[o.Path]=UIRefs[o.Path] or {} table.insert(UIRefs[o.Path],paint) paint(state)
 		addClick(f,function() Set(o.Path,not G(o.Path)) end)
+		if o.Desc then hookTip(f,o.Desc) end
 		return {Set=function(_,v) paint(v) end}
 	end
 	function Tab:Slider(o) o=o or{} local min,max=o.Min or 0,o.Max or 100 local step=o.Step or 1 local val=math.clamp(tonumber(G(o.Path)) or min,min,max)
@@ -205,20 +210,22 @@ local function addTab(name)
 		App:Connect(track.InputBegan,function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then drag=true fromX(i.Position.X) end end)
 		App:Connect(UIS.InputChanged,function(i) if drag and i.UserInputType==Enum.UserInputType.MouseMovement then fromX(i.Position.X) end end)
 		App:Connect(UIS.InputEnded,function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then drag=false end end)
+		if o.Desc then hookTip(f,o.Desc) end
 		return {Set=function(_,v) paint(v) end}
 	end
 	function Tab:Dropdown(o) o=o or{} local options=o.Options or {} local current=G(o.Path) or options[1]
 		local f=row(30) hoverize(f) rtitle(f,o.Name)
 		local sel=new("TextLabel",{Size=UDim2.new(0.34,-20,1,0),Position=UDim2.new(0.66,-14,0,0),BackgroundTransparency=1,Text=tostring(current),TextColor3=COL.muted,Font=Enum.Font.Gotham,TextSize=12,TextXAlignment=Enum.TextXAlignment.Right},f)
-		local list=new("ScrollingFrame",{BackgroundColor3=COL.panel,BorderSizePixel=0,Visible=false,ZIndex=120,ScrollBarThickness=2,Parent=gui}) corner(list,7) stroke(list)
+		local list=new("Frame",{Size=UDim2.new(1,-8,0,0),Position=UDim2.new(0,4,1,2),BackgroundColor3=COL.panel,BorderSizePixel=0,ClipsDescendants=true,Visible=false,ZIndex=30},f) corner(list,7) stroke(list)
 		local ll=new("UIListLayout",{Padding=UDim.new(0,3),SortOrder=Enum.SortOrder.LayoutOrder},list)
-		table.insert(openPopups,list)
-		local function reposition() if not list.Visible or not f.Parent then return end local ap,as=f.AbsolutePosition,f.AbsoluteSize list.Size=UDim2.fromOffset(math.max(160,as.X),math.clamp(#options*27+8,28,190)) list.Position=UDim2.fromOffset(ap.X,ap.Y+as.Y+4) end
+		local open=false
 		for _,opt in ipairs(options) do
-			local b=new("TextButton",{Size=UDim2.new(1,0,0,24),BackgroundColor3=COL.elem,BorderSizePixel=0,Text="  "..opt,TextXAlignment=Enum.TextXAlignment.Left,TextColor3=COL.text,Font=Enum.Font.Gotham,TextSize=12,AutoButtonColor=false,ZIndex=122},list) corner(b,5)
-			App:Connect(b.MouseButton1Click,function() current=opt sel.Text=tostring(opt) Set(o.Path,opt) list.Visible=false end)
+			local b=new("TextButton",{Size=UDim2.new(1,0,0,24),BackgroundColor3=COL.elem,BorderSizePixel=0,Text="  "..opt,TextXAlignment=Enum.TextXAlignment.Left,TextColor3=COL.text,Font=Enum.Font.Gotham,TextSize=12,AutoButtonColor=false,ZIndex=31},list) corner(b,5)
+			App:Connect(b.MouseButton1Click,function() current=opt sel.Text=tostring(opt) Set(o.Path,opt) open=false list.Visible=false end)
 		end
-		addClick(f,function() list.Visible=not list.Visible if list.Visible then reposition() end end)
+		App:Connect(ll:GetPropertyChangedSignal("AbsoluteContentSize"),function() list.CanvasSize=UDim2.fromOffset(0,ll.AbsoluteContentSize.Y+6) end)
+		addClick(f,function() open=not open list.Visible=open if open then list.Size=UDim2.new(1,-8,0,math.clamp(#options*27+8,28,190)) end end)
+		if o.Desc then hookTip(f,o.Desc) end
 		return {Set=function(_,v) sel.Text=tostring(v) end}
 	end
 	function Tab:Keybind(o) o=o or{} local current=G(o.Path) or "None"
@@ -227,23 +234,34 @@ local function addTab(name)
 		local capturing=false
 		App:Connect(kb.MouseButton1Click,function() capturing=true kb.Text="press" end)
 		App:Connect(UIS.InputBegan,function(input) if capturing and input.KeyCode~=Enum.KeyCode.Unknown then capturing=false local n=input.KeyCode.Name kb.Text=n Set(o.Path,n) end end)
+		if o.Desc then hookTip(f,o.Desc) end
 		return {Set=function(_,v) kb.Text=tostring(v) end}
 	end
 	return Tab
 end
 
--- drag (close popups on drag)
+-- tooltip (forward-declared usage above)
+local tip=new("Frame",{Size=UDim2.fromOffset(220,40),BackgroundColor3=COL.bg,BackgroundTransparency=0.08,BorderSizePixel=0,Visible=false,ZIndex=300},gui)
+corner(tip,8) stroke(tip,COL.accent,1)
+local tipText=new("TextLabel",{Size=UDim2.new(1,-12,1,-8),Position=UDim2.fromOffset(6,4),BackgroundTransparency=1,Text="",TextColor3=COL.text,Font=Enum.Font.Gotham,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true},tip)
+local tipVisible=false
+local function showTip(t) tipText.Text=t tip.Visible=true tipVisible=true pcall(function() local b=tipText.TextBounds tip.Size=UDim2.fromOffset(math.clamp(b.X+16,120,260),b.Y+10) end) end
+local function hideTip() tip.Visible=false tipVisible=false end
+function hookTip(frame,desc) App:Connect(frame.MouseEnter,function() showTip(desc) end) App:Connect(frame.MouseLeave,function() hideTip() end) end
+App:Connect(UIS.InputChanged,function(input) if tipVisible and input.UserInputType==Enum.UserInputType.MouseMovement then local vp=gui.AbsoluteSize local m=UIS:GetMouseLocation() tip.Position=UDim2.fromOffset(math.clamp(m.X+14,4,math.max(4,vp.X-tip.AbsoluteSize.X-4)),math.clamp(m.Y+16,4,math.max(4,vp.Y-tip.AbsoluteSize.Y-4))) end end)
+
+-- drag
 do
 	local dragging,dragStart,startPos=false,nil,nil
-	App:Connect(topbar.InputBegan,function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true dragStart=i.Position startPos=main.Position closePopups() end end)
+	App:Connect(topbar.InputBegan,function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true dragStart=i.Position startPos=main.Position end end)
 	App:Connect(UIS.InputChanged,function(i) if dragging and i.UserInputType==Enum.UserInputType.MouseMovement then local d=i.Position-dragStart main.Position=UDim2.new(0.5,startPos.X.Offset+d.X,0.5,startPos.Y.Offset+d.Y) end end)
 	App:Connect(UIS.InputEnded,function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end end)
 end
 App:Connect(hideBtn.MouseButton1Click,function() main.Visible=false end)
 
--- modules state
-local cam=WS.CurrentCamera
-App:Connect(WS:GetPropertyChangedSignal("CurrentCamera"),function() cam=WS.CurrentCamera end)
+----------------------------------------------------------------
+-- modules (все guards на localRec())
+----------------------------------------------------------------
 local rayParams=RaycastParams.new() rayParams.FilterType=Enum.RaycastFilterType.Exclude rayParams.IgnoreWater=true
 local internalRay=false
 local function isVisible(pos,targetChar)
@@ -259,12 +277,12 @@ local function isVisible(pos,targetChar)
 end
 local function getBestHitbox(char) if not char then return nil end for _,n in ipairs({"Head","UpperTorso","HumanoidRootPart","Torso"}) do local p=char:FindFirstChild(n) if p and p:IsA("BasePart") then return p end end return nil end
 
--- aimbot
 local cachedTarget=nil
 local function getBestTarget()
-	if not cam or not localRec() or not localRec().alive then return nil end
+	if not cam then return nil end
+	local lc=localRec() if not lc or not lc.alive then return nil end
 	local vp=cam.ViewportSize local center=Vector2.new(vp.X*0.5,vp.Y*0.5)
-	local fov=S.Aimbot.FOV or 120 local best,bd=nil,fov
+	local fov=S.Aimbot.FOV local best,bd=nil,fov
 	for plr,rec in pairs(Cache.byPlayer) do
 		if plr~=LP and rec.alive and rec.char then
 			if not S.Aimbot.OnlyEnemies or rec.enemy then
@@ -290,14 +308,13 @@ if drawingAvailable then local ok,c=pcall(function() return Drawing.new("Circle"
 App:BindRender("aim",Enum.RenderPriority.Camera.Value-1,function(dt)
 	cam=WS.CurrentCamera
 	if fovCircle then
-		if (S.Aimbot.Enabled or S.Aimbot.Silent) and S.Aimbot.ShowFOV and cam then
-			local vp=cam.ViewportSize fovCircle.Position=Vector2.new(vp.X*0.5,vp.Y*0.5) fovCircle.Radius=S.Aimbot.FOV fovCircle.Color=S.Aimbot.Silent and Color3.fromRGB(255,80,80) or Color3.fromRGB(0,255,100) fovCircle.Visible=true
-		else fovCircle.Visible=false end
+		if (S.Aimbot.Enabled or S.Aimbot.Silent) and S.Aimbot.ShowFOV and cam then local vp=cam.ViewportSize fovCircle.Position=Vector2.new(vp.X*0.5,vp.Y*0.5) fovCircle.Radius=S.Aimbot.FOV fovCircle.Color=S.Aimbot.Silent and Color3.fromRGB(255,80,80) or Color3.fromRGB(0,255,100) fovCircle.Visible=true else fovCircle.Visible=false end
 	end
-	if not localRec() then cachedTarget=nil return end
-	if S.Aimbot.Enabled or S.Aimbot.Silent then cachedTarget=getBestTarget() else cachedTarget=nil end
-	if S.Aimbot.Enabled and cachedTarget and cam then
-		local c=cam.CFrame local desired=CFrame.lookAt(c.Position,cachedTarget.pos)
+	local t=nil
+	if S.Aimbot.Enabled or S.Aimbot.Silent then t=getBestTarget() end
+	cachedTarget=t
+	if S.Aimbot.Enabled and t and cam then
+		local c=cam.CFrame local desired=CFrame.lookAt(c.Position,t.pos)
 		local sm=math.max(S.Aimbot.Smoothing,0.01)
 		local alpha=math.clamp(1-math.exp(-(dt or 1/60)*(60/sm)),0,1)
 		cam.CFrame=c:Lerp(desired,alpha)
@@ -325,7 +342,8 @@ local function hookBody(self,...)
 	if isRay then local a={...} a[2]=nd return origNC(self,table.unpack(a)) else local a={...} a[1]=Ray.new(origin,nd) return origNC(self,table.unpack(a)) end
 end
 local function installHook()
-	if hookOn or not (type(getrawmetatable)=="function" and type(setreadonly)=="function" and type(newcclosure)=="function" and type(getnamecallmethod)=="function") then return end
+	if hookOn then return end
+	if not (type(getrawmetatable)=="function" and type(setreadonly)=="function" and type(newcclosure)=="function" and type(getnamecallmethod)=="function") then return end
 	local ok,gmt=pcall(getrawmetatable,game) if not ok or not gmt then return end
 	mt=gmt origNC=mt.__namecall
 	pcall(setreadonly,mt,false) pcall(function() mt.__namecall=newcclosure(hookBody) end) pcall(setreadonly,mt,true)
@@ -334,7 +352,7 @@ end
 local function uninstallHook() if not hookOn or not mt or not origNC then return end pcall(setreadonly,mt,false) pcall(function() mt.__namecall=origNC end) pcall(setreadonly,mt,true) hookOn=false end
 installHook()
 
--- triggerbot
+-- trigger
 local lastTrigger=0
 App:Connect(RS.Heartbeat,function()
 	if not S.Trigger.Enabled or not cam then return end
@@ -342,10 +360,7 @@ App:Connect(RS.Heartbeat,function()
 	local t=cachedTarget
 	if t and t.rec.alive then
 		if not S.Trigger.OnlyEnemies or t.rec.enemy then
-			if not S.Trigger.WallCheck or isVisible(t.pos,t.rec.char) then
-				lastTrigger=now
-				if type(mouse1click)=="function" then pcall(mouse1click) else local lc=localRec() local tool=lc and lc.char and lc.char:FindFirstChildOfClass("Tool") if tool then pcall(function() tool:Activate() end) end end
-			end
+			if not S.Trigger.WallCheck or isVisible(t.pos,t.rec.char) then lastTrigger=now if type(mouse1click)=="function" then pcall(mouse1click) end end
 		end
 	end
 end)
@@ -401,10 +416,7 @@ local function createFly(root)
 	local ao=Instance.new("AlignOrientation") ao.Attachment0=att ao.MaxTorque=math.huge ao.Responsiveness=200 ao.Mode=Enum.OrientationAlignmentMode.OneAttachment ao.Parent=root
 	MV.fly={att=att,lv=lv,ao=ao}
 end
-App:Connect(LP.CharacterAdded,function(char)
-	MV.origWalk=nil destroyFly() MV.ncOn=false
-	char:WaitForChild("HumanoidRootPart",5)
-end)
+App:Connect(LP.CharacterAdded,function() MV.origWalk=nil destroyFly() MV.ncOn=false end)
 App:Connect(RS.Heartbeat,function(dt)
 	local lc=localRec() if not lc or not lc.alive or not lc.hum or not lc.root then return end
 	local hum,root=lc.hum,lc.root
@@ -418,7 +430,7 @@ App:Connect(RS.Heartbeat,function(dt)
 		MV.ncOn=S.Move.NoClip
 	end
 	if S.Move.InfJump and UIS:IsKeyDown(Enum.KeyCode.Space) and tick()-MV.lastJump>0.22 then hum:ChangeState(Enum.HumanoidStateType.Jumping) MV.lastJump=tick() end
-	if S.Move.Bhop and UIS:IsKeyDown(Enum.KeyCode.Space) then local s=hum:GetState() if s==Enum.HumanoidStateType.Landed or s==Enum.HumanoidStateType.Running then if tick()-MV.lastBhop>0.1 then hum:ChangeState(Enum.HumanoidStateType.Jumping) MV.lastBhop=tick() end end end
+	if S.Move.Bhop and UIS:IsKeyDown(Enum.KeyCode.Space) then local s=hum:GetState() if s==Enum.HumanoidStateType.Landed or s==Enum.HumanoidStateType.Running or s==Enum.HumanoidStateType.RunningNoPhysics then hum:ChangeState(Enum.HumanoidStateType.Jumping) end end
 	if S.Move.Fly then
 		if not MV.fly or not (MV.fly.lv and MV.fly.lv.Parent==root) then createFly(root) end
 		local move=Vector3.zero
@@ -448,9 +460,7 @@ App:BindRender("aa",Enum.RenderPriority.Camera.Value+5,function(dt)
 	local jit=0
 	if S.AA.Jitter then jit=math.sin(tick()*12)*math.rad(S.AA.JitterAngle) end
 	local des=0
-	if S.AA.Desync then
-		if S.AA.DesyncMode=="Spin" then des=math.rad(tick()*S.AA.DesyncSpeed) elseif S.AA.DesyncMode=="Static" then des=math.rad(60) else des=math.rad(180) end
-	end
+	if S.AA.Desync then if S.AA.DesyncMode=="Spin" then des=math.rad(tick()*S.AA.DesyncSpeed) elseif S.AA.DesyncMode=="Static" then des=math.rad(60) else des=math.rad(180) end end
 	if AA.rootJ and AA.origRoot then AA.rootJ.C0=AA.origRoot*CFrame.Angles(0,jit+des,0) end
 	if S.AA.HideHead and AA.neck and AA.origNeck then AA.neck.C0=AA.origNeck*CFrame.Angles(0,math.rad(180),0)
 	elseif AA.neck and AA.origNeck and AA.neck.C0~=AA.origNeck then AA.neck.C0=AA.origNeck end
@@ -464,6 +474,7 @@ App:Connect(RS.Heartbeat,function()
 	if not S.Rage.Enabled then return end
 	local now=tick() if now-lastRage<0.5 then return end lastRage=now
 	local lc=localRec() if not lc or not lc.root or not lc.alive then return end
+	if S.Rage.Spinbot then local rad=math.rad(S.Rage.SpinSpeed) lc.root.CFrame=lc.root.CFrame*CFrame.Angles(0,rad,0) end
 	if S.Rage.MassFling then
 		for plr,rec in pairs(Cache.byPlayer) do
 			if plr~=LP and rec.alive and rec.root and rec.enemy then
@@ -476,134 +487,108 @@ App:Connect(RS.Heartbeat,function()
 	if S.Rage.VoidTP then
 		for plr,rec in pairs(Cache.byPlayer) do if plr~=LP and rec.alive and rec.root and rec.enemy and (lc.root.Position-rec.root.Position).Magnitude<20 then pcall(function() rec.root.CFrame=CFrame.new(0,-500,0) end) end end
 	end
-	if S.Rage.LagMachine then
-		if #rageInstances<(S.Rage.LagMachine and 20 or 0) then
-			pcall(function() local p=Instance.new("Part") p.Size=Vector3.new(1,1,1) p.Anchored=false p.CanCollide=false p.Transparency=1 p.CFrame=lc.root.CFrame*CFrame.new((math.random()-0.5)*20,(math.random()-0.5)*20,(math.random()-0.5)*20)
-				local av=Instance.new("AngularVelocity") av.AngularVelocity=Vector3.new((math.random()-0.5)*100,(math.random()-0.5)*100,(math.random()-0.5)*100) av.MaxTorque=math.huge local att=Instance.new("Attachment") att.Parent=p av.Attachment0=att av.Parent=p p.Parent=WS rageInstances[#rageInstances+1]=p end)
-		end
-	else
-		for i=#rageInstances,1,-1 do local o=rageInstances[i] if o and o:IsA("Part") then pcall(function() o:Destroy() end) table.remove(rageInstances,i) end end
-	end
 end)
 
--- misc: watermark + keybind display + antiafk
-local wmText,kdText=nil,nil
-if drawingAvailable then
-	local ok1,t1=pcall(function() return Drawing.new("Text") end) if ok1 and t1 then wmText=t1 t1.Size=13 t1.Outline=true t1.Visible=false App:Add(function() pcall(function() t1:Remove() end) end) end
-	local ok2,t2=pcall(function() return Drawing.new("Text") end) if ok2 and t2 then kdText=t2 t2.Size=13 t2.Outline=true t2.Visible=false App:Add(function() pcall(function() t2:Remove() end) end) end
-end
+-- watermark + antiafk
+local wmText=nil
+if drawingAvailable then local ok,t=pcall(function() return Drawing.new("Text") end) if ok and t then wmText=t t.Size=13 t.Outline=true t.Visible=false App:Add(function() pcall(function() t:Remove() end) end) end end
 local diagAcc=0
 App:Connect(RS.Heartbeat,function(dt)
 	diagAcc=diagAcc+dt if diagAcc<0.25 then return end diagAcc=0
-	if wmText then wmText.Visible=S.Misc.Watermark if S.Misc.Watermark then wmText.Text="unknown v12" wmText.Position=Vector2.new(10,10) wmText.Color=Color3.fromRGB(235,235,240) end end
-	if kdText then kdText.Visible=S.Misc.KeybindDisplay if S.Misc.KeybindDisplay then kdText.Text=string.format("[%s] Aim [%s] Silent [%s] Fly [%s] Speed",S.Keys.Aimbot,S.Keys.Silent,S.Keys.Fly,S.Keys.Speed) kdText.Position=Vector2.new(10,30) kdText.Color=Color3.fromRGB(235,235,240) end end
+	if wmText then wmText.Visible=S.Misc.Watermark if S.Misc.Watermark then wmText.Text="unknown v13" wmText.Position=Vector2.new(10,10) wmText.Color=Color3.fromRGB(235,235,240) end end
 end)
 App:Connect(LP.Idled,function() if S.Misc.AntiAFK then pcall(function() VirtualUser:CaptureController() VirtualUser:ClickButton2(Vector2.new()) end) end end)
 
--- panic + hotkeys
-local function panic()
-	for _,p in ipairs(DANGEROUS) do Set(p,false) end
+----------------------------------------------------------------
+-- UI wiring
+----------------------------------------------------------------
+local tCombat=addTab("combat")
+tCombat:Section("aimbot")
+tCombat:Toggle({Name="Aimbot",Path="Aimbot.Enabled",Desc="Плавно наводит камеру на цель в FOV."})
+tCombat:Toggle({Name="Silent Aim",Path="Aimbot.Silent",Desc="Подменяет направление выстрела без движения камеры."})
+tCombat:Toggle({Name="Wall Check",Path="Aimbot.WallCheck",Desc="Не целится сквозь стены."})
+tCombat:Toggle({Name="Only Enemies",Path="Aimbot.OnlyEnemies",Desc="Игнорирует союзников."})
+tCombat:Toggle({Name="FOV Circle",Path="Aimbot.ShowFOV",Desc="Показывает круг FOV."})
+tCombat:Slider({Name="FOV",Path="Aimbot.FOV",Min=20,Max=600,Step=10,Desc="Радиус захвата цели."})
+tCombat:Slider({Name="Smoothing",Path="Aimbot.Smoothing",Min=1,Max=20,Step=1,Desc="Сила сглаживания."})
+tCombat:Slider({Name="Prediction",Path="Aimbot.Prediction",Min=0,Max=0.5,Step=0.01,Desc="Упреждение по скорости."})
+tCombat:Section("triggerbot")
+tCombat:Toggle({Name="TriggerBot",Path="Trigger.Enabled",Desc="Авто-выстрел когда цель в прицеле."})
+tCombat:Slider({Name="Cooldown",Path="Trigger.Cooldown",Min=0,Max=0.5,Step=0.01,Desc="Задержка между выстрелами."})
+local tVis=addTab("visuals")
+tVis:Section("esp")
+tVis:Toggle({Name="ESP",Path="ESP.Enabled",Desc="Подсветка игроков."})
+tVis:Toggle({Name="Boxes",Path="ESP.Boxes",Desc="Рамки."})
+tVis:Toggle({Name="Health Bar",Path="ESP.HealthBar",Desc="Полоска HP."})
+tVis:Toggle({Name="Snaplines",Path="ESP.Snaplines",Desc="Линии к целям."})
+tVis:Toggle({Name="Names",Path="ESP.Names",Desc="Имена."})
+tVis:Toggle({Name="Distance",Path="ESP.Distance",Desc="Дистанция."})
+tVis:Toggle({Name="Chams",Path="ESP.Chams",Desc="Highlight сквозь стены."})
+tVis:Slider({Name="Max Distance",Path="ESP.MaxDistance",Min=50,Max=2000,Step=50,Desc="Отсечка по дистанции."})
+local tMove=addTab("move")
+tMove:Section("speed")
+tMove:Toggle({Name="Speed",Path="Move.Speed",Desc="Ускорение передвижения."})
+tMove:Dropdown({Name="Mode",Path="Move.SpeedMode",Options={"Walk","Vel"},Desc="Walk=WalkSpeed, Vel=velocity."})
+tMove:Slider({Name="Speed",Path="Move.SpeedValue",Min=16,Max=200,Step=1,Desc="Значение скорости."})
+tMove:Section("fly")
+tMove:Toggle({Name="Fly",Path="Move.Fly",Desc="Полёт на LinearVelocity."})
+tMove:Slider({Name="Fly Speed",Path="Move.FlyValue",Min=20,Max=200,Step=5,Desc="Скорость полёта."})
+tMove:Section("other")
+tMove:Toggle({Name="NoClip",Path="Move.NoClip",Desc="Проход сквозь стены."})
+tMove:Toggle({Name="Inf Jump",Path="Move.InfJump",Desc="Бесконечный прыжок."})
+tMove:Toggle({Name="Bhop",Path="Move.Bhop",Desc="Авто-прыжок."})
+local tAA=addTab("antiaim")
+tAA:Section("angles")
+tAA:Toggle({Name="Jitter",Path="AA.Jitter",Desc="Дёргает угол."})
+tAA:Slider({Name="Jitter Angle",Path="AA.JitterAngle",Min=10,Max=180,Step=5,Desc="Амплитуда."})
+tAA:Toggle({Name="Desync",Path="AA.Desync",Desc="Рассинхрон угла."})
+tAA:Dropdown({Name="Desync Mode",Path="AA.DesyncMode",Options={"Spin","Static","Backwards"},Desc="Режим рассинхрона."})
+tAA:Toggle({Name="Hide Head",Path="AA.HideHead",Desc="Прячет голову."})
+local tRage=addTab("rage")
+tRage:Section("master")
+tRage:Toggle({Name="Rage Master",Path="Rage.Enabled",Desc="Глобальный выключатель rage."})
+tRage:Toggle({Name="Mass Fling",Path="Rage.MassFling",Desc="Раскрутить врагов."})
+tRage:Toggle({Name="Void TP",Path="Rage.VoidTP",Desc="Телепорт врага в void."})
+tRage:Toggle({Name="Spinbot",Path="Rage.Spinbot",Desc="Крутит персонажа."})
+local tMisc=addTab("misc")
+tMisc:Section("safety")
+tMisc:Button({Name="PANIC NOW",Desc="Выключает всё опасное.",Callback=function()
+	for _,p in ipairs({"Aimbot.Enabled","Aimbot.Silent","Trigger.Enabled","ESP.Enabled","ESP.Chams","Move.Speed","Move.Fly","Move.NoClip","Move.InfJump","Move.Bhop","AA.Jitter","AA.Desync","AA.HideHead","Rage.Enabled","Rage.MassFling","Rage.VoidTP","Rage.Spinbot"}) do Set(p,false) end
 	destroyFly() destroyRage()
-	cachedTarget=nil
-end
+end})
+tMisc:Toggle({Name="Watermark",Path="Misc.Watermark",Desc="Надпись."})
+tMisc:Toggle({Name="Anti-AFK",Path="Misc.AntiAFK",Desc="Не даёт кикнуть за AFK."})
+tMisc:Keybind({Name="UI Key",Path="Keys.UI",Desc="Показать/скрыть UI."})
+tMisc:Button({Name="Unload",Desc="Полная выгрузка.",Callback=function() if ENV.__ABYSS then ENV.__ABYSS.Unload() end end})
+
+-- global keys
 App:Connect(UIS.InputBegan,function(input,processed)
 	if processed then return end
 	local kc=input.KeyCode.Name
-	if kc==S.Misc.PanicKey then panic() return end
 	if kc==S.Keys.UI then main.Visible=not main.Visible return end
+	if kc==S.Misc.PanicKey then
+		for _,p in ipairs({"Aimbot.Enabled","Aimbot.Silent","Trigger.Enabled","ESP.Enabled","ESP.Chams","Move.Speed","Move.Fly","Move.NoClip","Move.InfJump","Move.Bhop","AA.Jitter","AA.Desync","AA.HideHead","Rage.Enabled","Rage.MassFling","Rage.VoidTP","Rage.Spinbot"}) do Set(p,false) end
+		destroyFly() destroyRage() return
+	end
 	if kc==S.Keys.Aimbot then Set("Aimbot.Enabled",not G("Aimbot.Enabled")) end
 	if kc==S.Keys.Silent then Set("Aimbot.Silent",not G("Aimbot.Silent")) end
 	if kc==S.Keys.Fly then Set("Move.Fly",not G("Move.Fly")) end
 	if kc==S.Keys.Speed then Set("Move.Speed",not G("Move.Speed")) end
-	if kc==S.Keys.ESP then Set("ESP.Enabled",not G("ESP.Enabled")) end
 end)
 
--- UI wiring
-local tCombat=addTab("combat")
-tCombat:Section("aimbot")
-tCombat:Toggle({Name="Aimbot",Path="Aimbot.Enabled"})
-tCombat:Toggle({Name="Silent Aim",Path="Aimbot.Silent"})
-tCombat:Toggle({Name="Wall Check",Path="Aimbot.WallCheck"})
-tCombat:Toggle({Name="Only Enemies",Path="Aimbot.OnlyEnemies"})
-tCombat:Toggle({Name="FOV Circle",Path="Aimbot.ShowFOV"})
-tCombat:Slider({Name="FOV",Path="Aimbot.FOV",Min=20,Max=600,Step=10})
-tCombat:Slider({Name="Smoothing",Path="Aimbot.Smoothing",Min=1,Max=20,Step=1})
-tCombat:Slider({Name="Prediction",Path="Aimbot.Prediction",Min=0,Max=0.5,Step=0.01})
-tCombat:Section("triggerbot")
-tCombat:Toggle({Name="TriggerBot",Path="Trigger.Enabled"})
-tCombat:Toggle({Name="Trigger WallCheck",Path="Trigger.WallCheck"})
-local tVis=addTab("visuals")
-tVis:Section("esp")
-tVis:Toggle({Name="ESP",Path="ESP.Enabled"})
-tVis:Toggle({Name="Boxes",Path="ESP.Boxes"})
-tVis:Toggle({Name="Health Bar",Path="ESP.HealthBar"})
-tVis:Toggle({Name="Snaplines",Path="ESP.Snaplines"})
-tVis:Toggle({Name="Names",Path="ESP.Names"})
-tVis:Toggle({Name="Distance",Path="ESP.Distance"})
-tVis:Toggle({Name="Chams",Path="ESP.Chams"})
-tVis:Slider({Name="Max Distance",Path="ESP.MaxDistance",Min=50,Max=2000,Step=50})
-local tMove=addTab("move")
-tMove:Section("speed")
-tMove:Toggle({Name="Speed",Path="Move.Speed"})
-tMove:Dropdown({Name="Mode",Path="Move.SpeedMode",Options={"Walk","Vel"}})
-tMove:Slider({Name="Speed",Path="Move.SpeedValue",Min=16,Max=200,Step=1})
-tMove:Section("fly")
-tMove:Toggle({Name="Fly",Path="Move.Fly"})
-tMove:Slider({Name="Fly Speed",Path="Move.FlyValue",Min=20,Max=200,Step=5})
-tMove:Section("other")
-tMove:Toggle({Name="NoClip",Path="Move.NoClip"})
-tMove:Toggle({Name="Inf Jump",Path="Move.InfJump"})
-tMove:Toggle({Name="Bhop",Path="Move.Bhop"})
-local tAA=addTab("antiaim")
-tAA:Section("angles")
-tAA:Toggle({Name="Jitter",Path="AA.Jitter"})
-tAA:Slider({Name="Jitter Angle",Path="AA.JitterAngle",Min=10,Max=180,Step=5})
-tAA:Toggle({Name="Desync",Path="AA.Desync"})
-tAA:Dropdown({Name="Desync Mode",Path="AA.DesyncMode",Options={"Spin","Static","Backwards"}})
-tAA:Toggle({Name="Hide Head",Path="AA.HideHead"})
-local tRage=addTab("rage")
-tRage:Section("master")
-tRage:Toggle({Name="Rage Master",Path="Rage.Enabled"})
-tRage:Toggle({Name="Mass Fling",Path="Rage.MassFling"})
-tRage:Dropdown({Name="Fling Target",Path="Rage.FlingTarget",Options={"Nearest","All"}})
-tRage:Toggle({Name="Void TP",Path="Rage.VoidTP"})
-local tMisc=addTab("misc")
-tMisc:Section("safety")
-tMisc:Button({Name="PANIC NOW",Callback=panic})
-tMisc:Toggle({Name="Watermark",Path="Misc.Watermark"})
-tMisc:Toggle({Name="Keybind Display",Path="Misc.KeybindDisplay"})
-tMisc:Toggle({Name="Anti-AFK",Path="Misc.AntiAFK"})
-tMisc:Section("keybinds")
-tMisc:Keybind({Name="UI Key",Path="Keys.UI"})
-tMisc:Keybind({Name="Aimbot Key",Path="Keys.Aimbot"})
-tMisc:Keybind({Name="Silent Key",Path="Keys.Silent"})
-tMisc:Keybind({Name="Fly Key",Path="Keys.Fly"})
-tMisc:Keybind({Name="Speed Key",Path="Keys.Speed"})
-
--- load config then force safe inject
+-- load config AFTER UI built so paints sync
 loadConfig()
-for _,p in ipairs(DANGEROUS) do local g,k=p:match("^(%w+)%.(%w+)$") if S[g] then S[g][k]=false end end
 for p,list in pairs(UIRefs) do for _,fn in ipairs(list) do pcall(fn,G(p)) end end
 
 -- unload
 local function Unload()
-	pcall(panic)
-	pcall(uninstallHook)
-	for _,s in ipairs(scopes) do s:Destroy() end
+	pcall(function() for _,s in ipairs(scopes) do s:Destroy() end end)
 	table.clear(scopes)
-	pcall(nukePool)
-	pcall(destroyFly) pcall(destroyRage)
+	pcall(uninstallHook) pcall(nukePool) pcall(destroyFly) pcall(destroyRage)
 	local lc=localRec()
 	if lc and lc.hum and MV.origWalk then pcall(function() lc.hum.WalkSpeed=MV.origWalk end) end
-	if wmText then pcall(function() wmText:Remove() end) end
-	if kdText then pcall(function() kdText:Remove() end) end
-	if fovCircle then pcall(function() fovCircle:Remove() end) end
 	if gui then pcall(function() gui:Destroy() end) end
 	ENV.__ABYSS=nil
 end
 ENV.__ABYSS={Unload=Unload}
-
--- ensure visible
-main.Visible=true
-gui.Enabled=true
-print("[unknown v12] ready // RightShift = UI // End = panic")
+print("[unknown v13] ready // non-blocking boot // RightShift=UI // End=panic")
