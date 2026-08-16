@@ -1,5 +1,5 @@
--- abyss // unknown v7 (single-file complete build)
--- compact UI + all modules inline, no external deps
+-- abyss // unknown v8 (single-file complete build)
+-- жёсткий, стабильный, без декоративных функций
 
 local RS   = game:GetService("RunService")
 local Players = game:GetService("Players")
@@ -9,12 +9,14 @@ local WS   = game:GetService("Workspace")
 local TWS  = game:GetService("TweenService")
 local CoreGui = game:GetService("CoreGui")
 local VirtualUser = game:GetService("VirtualUser")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 if not RS:IsClient() then return end
 local LP = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
--- ================================================================
+----------------------------------------------------------------
 -- CAPS + ENV
--- ================================================================
+----------------------------------------------------------------
 local CAP = {
     drawing = type(Drawing)=="table" and type(Drawing.new)=="function",
     fs      = type(writefile)=="function" and type(readfile)=="function"
@@ -25,15 +27,16 @@ local CAP = {
     gethui  = type(gethui)=="function",
     mouse1  = type(mouse1click)=="function",
 }
+
 local ENV = (type(getgenv)=="function" and getgenv()) or _G
 if type(ENV.__ABYSS)=="table" and type(ENV.__ABYSS.Unload)=="function" then
     pcall(ENV.__ABYSS.Unload)
 end
 ENV.__ABYSS = nil
 
--- ================================================================
--- SCOPE SYSTEM
--- ================================================================
+----------------------------------------------------------------
+-- SCOPE SYSTEM (Maid-style cleanup)
+----------------------------------------------------------------
 local scopes = {}
 local function newScope(name)
     local s = { name=name, alive=true, conns={}, insts={}, fns={}, renders={} }
@@ -70,73 +73,73 @@ local function newScope(name)
 end
 local App = newScope("app")
 
--- ================================================================
--- SETTINGS (defensive, single source of truth)
--- ================================================================
+----------------------------------------------------------------
+-- SETTINGS (defensive defaults, SAFE INJECT = все OFF)
+----------------------------------------------------------------
 local S = {
     Aimbot = {
-        Enabled=false, Silent=false, FOV=150, Smoothing=0.12, Sensitivity=1.0,
-        Prediction=0.12, PredictGravity=false, HitboxOffset=0,
-        WallCheck=true, OnlyEnemies=true, Backtrack=false, BacktrackTime=0.2,
-        TargetLock=false, Hysteresis=true, HysteresisMult=1.3,
-        HumanizerStrength=0.4, HitChance=100,
+        Enabled=false, Silent=false, TargetLock=false,
+        FOV=150, Smoothing=0.12, Sensitivity=1.0,
+        Prediction=0.12, PredictGravity=false,
+        WallCheck=true, OnlyEnemies=true,
+        Bone="Head", -- Head / Torso / Nearest
+        HitChance=100, HumanizerStrength=0.4,
+        Hysteresis=true, HysteresisMult=1.3,
+        Backtrack=false, BacktrackTime=0.2,
     },
-    Trigger = { Enabled=false, OnlyEnemies=true, Delay=0.07, WallCheck=true },
+    Trigger = {
+        Enabled=false, OnlyEnemies=true, WallCheck=true,
+        Delay=0.07, Cooldown=0.15,
+    },
     ESP = {
         Enabled=false, Boxes=true, HealthBar=true, Snaplines=false,
         Names=true, Distance=true, Chams=false, OnlyEnemies=true,
-        MaxDistance=500, ShowFOVCircle=true, ShowTargetIndicator=false,
+        MaxDistance=500, ShowFOVCircle=true, ShowTargetIndicator=true,
     },
     Move = {
-        Speed=false, SpeedMode="Walk", SpeedValue=16,
+        Speed=false, SpeedMode="Walk", SpeedValue=16, VelCap=200,
         Fly=false, FlyValue=60,
-        NoClip=false, NoClipAdvanced=false,
-        InfJump=false, InfJumpBoost=0, InfJumpCooldown=0.22,
+        NoClip=false, InfJump=false, InfJumpCooldown=0.22, InfJumpBoost=0,
         Bhop=false,
-        VelMult=1.0, VelCap=200,
-        Hitbox=false, HitboxSize=12, HitboxTransparency=0.6,
     },
     AA = {
         Jitter=false, JitterMode="Sine", JitterAngle=40, JitterSpeed=12,
         Desync=false, DesyncMode="Spin", DesyncSpeed=30, DesyncStrength=1.0,
-        BufferTeleport=false,
-        HideHead=false, HideHeadMode="Back", HideHeadOffset=1.5,
-        FakeLag=false, FakeLagMode="Static", FakeLagIntensity=5, FakeLagFrequency=1, FakeLagBackForth=false,
-        ResolverBypass=false, MicroJitter=0.05,
-        Predictor=false, PredictorAngle=15,
-        Visualizer=false,
+        HideHead=false, HideHeadMode="Back",
+        FakeLag=false, FakeLagMode="Static", FakeLagIntensity=5, FakeLagFrequency=1,
     },
-    Rage = { Spinbot=false, SpinSpeed=25, SpinMode="Yaw" },
-    Misc = { Watermark=true, KeybindDisplay=true, AntiAFK=true },
+    Rage = {
+        -- ВСЁ OFF по умолчанию. Работает только в FE-weak играх.
+        MassFling=false, FlingTarget="Nearest", -- Nearest / All
+        VoidTP=false, VoidTPInterval=0.5,
+        RemoteSpam=false, RemoteSpamInterval=0.1,
+        LagMachine=false, LagMachineCount=20,
+        Unanchor=false,
+    },
+    Misc = {
+        Watermark=true, KeybindDisplay=true, AntiAFK=true,
+        PanicKey="End",
+    },
     Keys = {
         UI="RightShift", Aimbot="X", Silent="B", Trigger="C",
         Fly="F", Speed="V", AA="Z", Lock="Q", ESP="E",
+        Panic="End",
     },
 }
 
 local WATCH, UIREFS = {}, {}
 local function watch(p, fn) WATCH[p]=WATCH[p] or {}; WATCH[p][#WATCH[p]+1]=fn end
 local function uiref(p, fn) UIREFS[p]=UIREFS[p] or {}; UIREFS[p][#UIREFS[p]+1]=fn end
+
 local function G(path)
     local g, k = path:match("^(%w+)%.(%w+)$")
     return S[g] and S[g][k]
 end
-local function P(path, value, skipSave)
-    local g, k = path:match("^(%w+)%.(%w+)$")
-    if not S[g] or S[g][k]==nil then return false end
-    S[g][k] = value
-    for _, fn in ipairs(WATCH[path] or {}) do pcall(fn, value) end
-    for _, fn in ipairs(UIREFS[path] or {}) do pcall(fn, value) end
-    if not skipSave then queueSave() end
-    return true
-end
 
--- ================================================================
--- CONFIG (STRICT, fail-closed)
--- ================================================================
 local saveQueued = false
-local CFGPATH = "AbyssFW/unknown_v7.json"
-function saveConfig()
+local CFGPATH = "AbyssFW/unknown_v8.json"
+
+local function saveConfig()
     if not CAP.fs then return false end
     local ok, enc = pcall(function() return HS:JSONEncode(S) end)
     if not ok then return false end
@@ -149,18 +152,40 @@ function saveConfig()
     end)
     return wrote
 end
-function queueSave()
+
+local function queueSave()
     if saveQueued then return end
     saveQueued = true
     task.delay(0.6, function() saveQueued = false if App.alive then saveConfig() end end)
 end
+
+local function P(path, value, skipSave)
+    local g, k = path:match("^(%w+)%.(%w+)$")
+    if not S[g] or S[g][k] == nil then return false end
+    local expected = type(S[g][k])
+    local got = type(value)
+    if expected ~= got then
+        if expected == "number" and got == "string" then
+            local n = tonumber(value)
+            if n then value = n else return false end
+        else
+            return false
+        end
+    end
+    S[g][k] = value
+    for _, fn in ipairs(WATCH[path] or {}) do pcall(fn, value) end
+    for _, fn in ipairs(UIREFS[path] or {}) do pcall(fn, value) end
+    if not skipSave then queueSave() end
+    return true
+end
+
 local function loadConfig()
     if not CAP.fs or not isfile(CFGPATH) then return false end
     local ok, txt = pcall(readfile, CFGPATH)
     if not ok or type(txt)~="string" then return false end
     local ok2, data = pcall(function() return HS:JSONDecode(txt) end)
     if not ok2 or type(data)~="table" then return false end
-    -- STRICT: only apply known fields, ignore unknown
+    -- STRICT: только известные ключи, только правильные типы
     for g, keys in pairs(S) do
         if type(data[g]) == "table" then
             for k in pairs(keys) do
@@ -180,13 +205,14 @@ local function loadConfig()
     return true
 end
 
--- ================================================================
+----------------------------------------------------------------
 -- PLAYER CACHE (event-driven, generation-safe)
--- ================================================================
+----------------------------------------------------------------
 local Cache = { byPlayer = {} }
 local charL, leaveL = {}, {}
 local function onChar(fn) charL[#charL+1] = fn end
 local function onLeave(fn) leaveL[#leaveL+1] = fn end
+
 local cam = WS.CurrentCamera
 App:Connect(WS:GetPropertyChangedSignal("CurrentCamera"), function() cam = WS.CurrentCamera end)
 local function localRec() return Cache.byPlayer[LP] end
@@ -205,12 +231,12 @@ end
 local function onCharAdded(rec, char)
     if rec.cscope then rec.cscope:Destroy() end
     rec.gen = (rec.gen or 0) + 1
-    local gen = rec.gen
     rec.char = char
-    rec.cscope = newScope("char:"..rec.plr.Name..":"..gen)
+    rec.cscope = newScope("char:"..rec.plr.Name..":"..rec.gen)
     rec.hum  = char:FindFirstChildOfClass("Humanoid")
     rec.root = char:FindFirstChild("HumanoidRootPart")
     rec.head = char:FindFirstChild("Head")
+    rec.torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
     rec.rig  = (rec.hum and rec.hum.RigType == Enum.HumanoidRigType.R15) and "R15" or "R6"
     rec.alive = (rec.hum ~= nil and rec.hum.Health > 0)
     if rec.hum then
@@ -220,13 +246,13 @@ local function onCharAdded(rec, char)
         end)
     end
     recomputeEnemy(rec)
-    for _, fn in ipairs(charL) do pcall(fn, rec, char, gen) end
+    for _, fn in ipairs(charL) do pcall(fn, rec, char, rec.gen) end
 end
 
 local function onCharRemoving(rec, char)
     if rec.char ~= char then return end
     rec.alive = false
-    rec.char = nil; rec.hum = nil; rec.root = nil; rec.head = nil
+    rec.char = nil; rec.hum = nil; rec.root = nil; rec.head = nil; rec.torso = nil
     if rec.cscope then rec.cscope:Destroy(); rec.cscope = nil end
     for _, fn in ipairs(leaveL) do pcall(fn, rec, char) end
 end
@@ -256,13 +282,14 @@ App:Connect(LP:GetPropertyChangedSignal("Team"), recomputeAll)
 App:Connect(LP:GetPropertyChangedSignal("Neutral"), recomputeAll)
 recomputeAll()
 
--- ================================================================
+----------------------------------------------------------------
 -- SHARED RAYCAST + VISIBILITY
--- ================================================================
+----------------------------------------------------------------
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 rayParams.IgnoreWater = true
 local internalRay = false
+
 local function isVisible(pos, targetChar)
     if not cam then return true end
     local ignore = { cam }
@@ -281,9 +308,9 @@ local function isVisible(pos, targetChar)
     return false
 end
 
--- ================================================================
+----------------------------------------------------------------
 -- DIAGNOSTICS
--- ================================================================
+----------------------------------------------------------------
 local Diag = { fps=60, proj=0, ray=0, projRate=0, rayRate=0 }
 local rateAcc = 0
 App:Connect(RS.Heartbeat, function(dt)
@@ -296,14 +323,13 @@ App:Connect(RS.Heartbeat, function(dt)
     if dt > 0 then Diag.fps = Diag.fps + (1/dt - Diag.fps) * 0.05 end
 end)
 
--- ================================================================
--- UI (inline, minimal, unknown theme, NO layout bugs)
--- ================================================================
+----------------------------------------------------------------
+-- UI (inline, unknown theme, DisplayOrder=100, IgnoreGuiInset=false)
+----------------------------------------------------------------
 local COL = {
     bg     = Color3.fromRGB(12, 12, 14),
     panel  = Color3.fromRGB(18, 18, 21),
     elem   = Color3.fromRGB(24, 24, 28),
-    elemH  = Color3.fromRGB(32, 32, 38),
     stroke = Color3.fromRGB(38, 38, 44),
     text   = Color3.fromRGB(235, 235, 240),
     muted  = Color3.fromRGB(120, 120, 130),
@@ -321,11 +347,11 @@ do
     end
 end
 local gui = App:Give(Instance.new("ScreenGui"))
-gui.Name = "unk_v7_"..math.random(100, 999)
+gui.Name = "unk_v8_"..math.random(100, 999)
 gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
+gui.IgnoreGuiInset = false -- ВАЖНО: не игнорим inset, чтобы не конфликтовать с topbar
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-gui.DisplayOrder = 999
+gui.DisplayOrder = 100 -- достаточно высокий, но не конфликтует с Roblox CoreGui (1000+)
 gui.Parent = guiParent
 
 local function inst(cls, props, parent)
@@ -337,7 +363,6 @@ end
 local function corner(p, r) inst("UICorner", {CornerRadius=UDim.new(0, r or 8)}, p) end
 local function stroke(p, c, t) inst("UIStroke", {Color=c or COL.stroke, Thickness=t or 1}, p) end
 
--- MAIN
 local main = inst("Frame", {
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.new(0.5, 0, 0.5, 0),
@@ -357,7 +382,7 @@ inst("TextLabel", {
 }, topbar)
 inst("TextLabel", {
     Size=UDim2.fromOffset(140,14), Position=UDim2.new(1,-150,0.5,-7), BackgroundTransparency=1,
-    Text="v7 // 2027", Font=Enum.Font.Code, TextSize=10, TextColor3=COL.muted,
+    Text="v8 // 2026", Font=Enum.Font.Code, TextSize=10, TextColor3=COL.muted,
     TextXAlignment=Enum.TextXAlignment.Right,
 }, topbar)
 local hideBtn = inst("TextButton", {
@@ -371,7 +396,6 @@ local minBtn = inst("TextButton", {
     TextColor3=COL.text, Font=Enum.Font.GothamBold, TextSize=11, AutoButtonColor=false,
 }, topbar); corner(minBtn, 6)
 
--- SIDEBAR
 local sidebar = inst("Frame", {
     Size=UDim2.new(0, 120, 1, -52), Position=UDim2.fromOffset(8, 48),
     BackgroundColor3=COL.panel, BorderSizePixel=0,
@@ -385,7 +409,6 @@ tabLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     tabList.CanvasSize = UDim2.fromOffset(0, tabLayout.AbsoluteContentSize.Y + 4)
 end)
 
--- PAGES
 local pages = inst("Frame", {
     Size=UDim2.new(1, -132, 1, -52), Position=UDim2.fromOffset(132, 48), BackgroundTransparency=1,
 }, main)
@@ -427,7 +450,6 @@ local function addTab(name)
     }, pages)
     local layout = inst("UIListLayout", {Padding=UDim.new(0,5), SortOrder=Enum.SortOrder.LayoutOrder}, page)
     inst("UIPadding", {PaddingTop=UDim.new(0,4), PaddingBottom=UDim.new(0,8), PaddingLeft=UDim.new(0,4), PaddingRight=UDim.new(0,6)}, page)
-    -- auto canvas size via AutomaticCanvasSize — no manual calc
     local btn = inst("TextButton", {
         Size=UDim2.new(1,0,0,30), BackgroundColor3=COL.panel, BorderSizePixel=0,
         Text=name, TextColor3=COL.muted, Font=Enum.Font.GothamMedium, TextSize=12, AutoButtonColor=false,
@@ -575,43 +597,55 @@ local function addTab(name)
     return tab
 end
 
--- ================================================================
--- AIMBOT MODULE (FLUXO-style scoring + prediction + backtrack + lock)
--- ================================================================
+----------------------------------------------------------------
+-- AIMBOT MODULE (multipoint + prediction + backtrack + single lock state)
+----------------------------------------------------------------
 local HIT_PRIORITY = {
-    R15 = {"Head", "UpperTorso", "LowerTorso", "HumanoidRootPart"},
-    R6  = {"Head", "Torso", "HumanoidRootPart"},
+    Head    = {"Head", "UpperTorso", "LowerTorso", "HumanoidRootPart"},
+    Torso   = {"UpperTorso", "LowerTorso", "HumanoidRootPart", "Head"},
+    Nearest = {"Head", "UpperTorso", "LowerTorso", "HumanoidRootPart", "Torso"},
 }
 local LEAD_CAP = 35
 local VEL_EMA_TC = 0.10
 local VEL_CAP = 500
+local VEL_STALE = 2.0
 local GRAVITY_Y = WS.Gravity or 196.2
 local BACKTRACK_MAX = 16
-local velEMA, velTS = setmetatable({}, {__mode="k"}), setmetatable({}, {__mode="k"})
+
+local velEMA    = setmetatable({}, {__mode="k"})
+local velTS     = setmetatable({}, {__mode="k"})
 local btHistory = setmetatable({}, {__mode="k"})
 
 local function pickPart(rec)
     if not rec or not rec.char then return nil end
-    local list = HIT_PRIORITY[rec.rig] or HIT_PRIORITY.R6
+    local bone = S.Aimbot.Bone
+    local list = HIT_PRIORITY[bone] or HIT_PRIORITY.Head
     for _, n in ipairs(list) do
         local p = rec.char:FindFirstChild(n)
-        if p and p:IsA("BasePart") then return p end
+        if p and p:IsA("BasePart") then
+            -- если bone = Head и голова в стене, фолбэк на торс
+            if bone == "Head" and n == "Head" and S.Aimbot.WallCheck then
+                local sp, on = cam:WorldToViewportPoint(p.Position)
+                if on and sp.Z > 0 and isVisible(p.Position, rec.char) then return p end
+            else
+                return p
+            end
+        end
     end
     return nil
 end
+
 local function computePredicted(part, smoothed, dist)
     local t = S.Aimbot.Prediction * (1 + dist / 300)
     local lead = smoothed * t
     if lead.Magnitude > LEAD_CAP then lead = lead.Unit * LEAD_CAP end
     local pos = part.Position + lead
     if S.Aimbot.PredictGravity and t > 0 then
-        pos = pos + Vector3.new(0, 0.5 * GRAVITY_Y * t * t, 0)
-    end
-    if S.Aimbot.HitboxOffset and S.Aimbot.HitboxOffset ~= 0 then
-        pos = pos + Vector3.new(0, S.Aimbot.HitboxOffset, 0)
+        pos = pos + Vector3.new(0, -0.5 * GRAVITY_Y * t * t, 0)
     end
     return pos
 end
+
 local function predictPosition(part)
     if not part or not part.Parent then return part and part.Position or nil end
     local now = os.clock()
@@ -620,7 +654,7 @@ local function predictPosition(part)
     if curVel.Magnitude > VEL_CAP then curVel = curVel.Unit * VEL_CAP end
     local prev, prevT = velEMA[part], velTS[part]
     local smoothed
-    if prev and prevT and (now - prevT) < 2.0 then
+    if prev and prevT and (now - prevT) < VEL_STALE then
         local dt = now - prevT
         local alpha = 1 - math.exp(-dt / VEL_EMA_TC)
         alpha = math.clamp(alpha, 0, 1)
@@ -629,13 +663,13 @@ local function predictPosition(part)
         smoothed = curVel
     end
     velEMA[part] = smoothed; velTS[part] = now
-    -- 2-pass
     local origin = cam and cam.CFrame.Position or Vector3.zero
     local d1 = (part.Position - origin).Magnitude
     local pos1 = computePredicted(part, smoothed, d1)
     local d2 = (pos1 - origin).Magnitude
     return computePredicted(part, smoothed, d2)
 end
+
 local function storeBacktrack(part)
     if not S.Aimbot.Backtrack then return end
     local hist = btHistory[part]
@@ -643,6 +677,7 @@ local function storeBacktrack(part)
     hist[#hist+1] = { pos = part.Position, t = os.clock() }
     while #hist > BACKTRACK_MAX do table.remove(hist, 1) end
 end
+
 local function getBacktrackPos(part)
     if not S.Aimbot.Backtrack then return part.Position end
     local hist = btHistory[part]
@@ -652,18 +687,26 @@ local function getBacktrackPos(part)
     for i = #hist, 1, -1 do
         local entry = hist[i]
         if now - entry.t > maxAge then break end
-        if isVisible(entry.pos, part) then return entry.pos end
+        if isVisible(entry.pos, part.Parent) then return entry.pos end
     end
     return part.Position
 end
 
--- AIM state
+-- AIM state (single source of truth)
 local AIM = {
-    current = nil,        -- {rec, part, pos, screen}
+    current = nil,        -- {rec, part, pos, screen, plr}
     prevPlayer = nil,
-    lockEnabled = false,
     triggerAcc = 0,
+    lastShot = 0,
 }
+
+-- Target Lock: watch Aimbot.TargetLock directly (Q-toggle пишет сюда же)
+watch("Aimbot.TargetLock", function(v)
+    if not v then AIM.current = nil; AIM.prevPlayer = nil end
+end)
+watch("Aimbot.Enabled", function(v)
+    if not v then AIM.current = nil; AIM.prevPlayer = nil end
+end)
 
 local function getBestTarget()
     if not cam then return nil end
@@ -674,8 +717,8 @@ local function getBestTarget()
     local fov = S.Aimbot.FOV
     local hystFOV = fov * S.Aimbot.HysteresisMult
 
-    -- LOCK retention
-    if AIM.lockEnabled and AIM.current then
+    -- TARGET LOCK RETENTION (единственный источник правды: S.Aimbot.TargetLock)
+    if S.Aimbot.TargetLock and AIM.current then
         local rec = AIM.current.rec
         if rec and rec.alive and rec.char and rec.char.Parent then
             local part = pickPart(rec)
@@ -687,14 +730,16 @@ local function getBestTarget()
                         local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
                         if d <= fov * 1.5 then
                             if not S.Aimbot.WallCheck or isVisible(pos, rec.char) then
-                                return { rec=rec, part=part, pos=pos, screen=sp }
+                                return { rec=rec, part=part, pos=pos, screen=sp, plr=rec.plr }
                             end
                         end
                     end
                 end
             end
         end
-        AIM.lockEnabled = false; AIM.current = nil
+        -- цель потеряна — сбрасываем lock
+        P("Aimbot.TargetLock", false, true)
+        AIM.current = nil; AIM.prevPlayer = nil
     end
 
     local bestEntry, bestDist = nil, fov
@@ -710,7 +755,6 @@ local function getBestTarget()
                         local sp, on = cam:WorldToViewportPoint(pos)
                         if on and sp.Z > 0 then
                             local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-                            -- wall check with backtrack fallback
                             local visible = (not S.Aimbot.WallCheck) or isVisible(pos, rec.char)
                             if not visible and S.Aimbot.Backtrack then
                                 local bp = getBacktrackPos(part)
@@ -722,12 +766,16 @@ local function getBestTarget()
                                 end
                             end
                             if visible and d <= fov then
+                                -- Scoring: dist + weight*(1-hp)
+                                local hp = (rec.hum and rec.hum.Health>0 and rec.hum.MaxHealth>0)
+                                    and (rec.hum.Health / rec.hum.MaxHealth) or 0
+                                local score = d + 100 * (1 - hp)
                                 if plr == AIM.prevPlayer and d <= hystFOV then
-                                    prevEntry = { rec=rec, part=part, pos=pos, screen=sp, d=d, plr=plr }
+                                    prevEntry = { rec=rec, part=part, pos=pos, screen=sp, d=d, score=score, plr=plr }
                                 end
                                 if d < bestDist then
                                     bestDist = d
-                                    bestEntry = { rec=rec, part=part, pos=pos, screen=sp, d=d, plr=plr }
+                                    bestEntry = { rec=rec, part=part, pos=pos, screen=sp, d=d, score=score, plr=plr }
                                 end
                             end
                         end
@@ -736,10 +784,10 @@ local function getBestTarget()
             end
         end
     end
-    -- hysteresis
+    -- Hysteresis: keep prev if new is not much closer
     local final
     if S.Aimbot.Hysteresis and prevEntry and bestEntry and prevEntry.plr ~= bestEntry.plr then
-        final = (bestEntry.d < prevEntry.d * 0.85) and bestEntry or prevEntry
+        final = (bestEntry.score < prevEntry.score * 0.85) and bestEntry or prevEntry
     else
         final = bestEntry or prevEntry
     end
@@ -758,7 +806,7 @@ if CAP.drawing then
     end
 end
 
--- Target indicator (small circle above locked target head)
+-- Target indicator
 local tgtCircle = nil
 if CAP.drawing then
     local ok, c = pcall(function() return Drawing.new("Circle") end)
@@ -770,7 +818,6 @@ if CAP.drawing then
 end
 
 local function aimUpdate(dt)
-    -- FOV circle
     if fovCircle then
         if (S.Aimbot.Enabled or S.Aimbot.Silent) and S.ESP.ShowFOVCircle and cam then
             local vp = cam.ViewportSize
@@ -787,7 +834,6 @@ local function aimUpdate(dt)
     local t = nil
     if S.Aimbot.Enabled or S.Aimbot.Silent then t = getBestTarget() end
     AIM.current = t
-    -- target indicator
     if tgtCircle then
         if t and S.ESP.ShowTargetIndicator and cam and t.rec.head then
             local sp, on = cam:WorldToViewportPoint(t.rec.head.Position + Vector3.new(0, 0.5, 0))
@@ -809,57 +855,137 @@ local function aimUpdate(dt)
 end
 App:BindRender("aim", Enum.RenderPriority.Camera.Value - 1, aimUpdate)
 
--- Silent aim hook (covers all APIs)
+----------------------------------------------------------------
+-- SILENT AIM HOOK (AGGRESSIVE: covers all modern + legacy APIs)
+-- Raycast, FindPartOnRay*, Spherecast, Blockcast, GetPartBoundsInBox, GetPartsInPart
+----------------------------------------------------------------
 local hookOn, origNC, gameMt = false, nil, nil
+local lastShotTime = 0
+local silentTS = {} -- sliding 1-sec rate limiter
+
+local function rateLimitOk()
+    local cap = 60 -- max 60 silent redirects per second
+    local now = os.clock()
+    while #silentTS > 0 and (now - silentTS[1]) > 1 do
+        table.remove(silentTS, 1)
+    end
+    if #silentTS >= cap then return false end
+    table.insert(silentTS, now)
+    return true
+end
+
+local function shotDelayOk()
+    local now = os.clock()
+    if now - lastShotTime < 0.05 then return false end
+    lastShotTime = now
+    return true
+end
+
+local function humanize(part, pos)
+    if not part or not part:IsA("BasePart") then return pos end
+    local s = math.clamp(S.Aimbot.HumanizerStrength, 0, 1)
+    if s <= 0 then return pos end
+    local sz = part.Size
+    return pos + Vector3.new(
+        (math.random() - 0.5) * sz.X * 0.4 * s,
+        (math.random() - 0.5) * sz.Y * 0.3 * s,
+        (math.random() - 0.5) * sz.Z * 0.4 * s
+    )
+end
+
+local function isPlayerOriginRay(origin)
+    if typeof(origin) ~= "Vector3" then return false end
+    local lc = localRec()
+    if not lc or not lc.char then return false end
+    local hrp = lc.root or lc.char:FindFirstChild("HumanoidRootPart") or lc.char:FindFirstChild("Torso")
+    if not hrp then return false end
+    return (origin - hrp.Position).Magnitude < 60
+end
+
+local function getValidTarget()
+    local t = AIM.current
+    if not t then return nil end
+    if not t.rec or not t.rec.alive then return nil end
+    if not t.part or not t.part.Parent then return nil end
+    if cam then
+        local sp, on = cam:WorldToViewportPoint(t.pos)
+        if not on or sp.Z < 0 then return nil end
+    end
+    return t
+end
+
 local function hookBody(self, ...)
     if internalRay or not S.Aimbot.Silent then return origNC(self, ...) end
     if self ~= WS then return origNC(self, ...) end
     local m = getnamecallmethod()
     local isRay = (m == "Raycast")
     local isLegacy = (m == "FindPartOnRay" or m == "FindPartOnRayWithIgnoreList" or m == "FindPartOnRayWithWhitelist")
-    if not isRay and not isLegacy then return origNC(self, ...) end
+    local isSphere = (m == "Spherecast")
+    local isBlock = (m == "Blockcast")
+    local isBounds = (m == "GetPartBoundsInBox" or m == "GetPartsInPart")
+    if not isRay and not isLegacy and not isSphere and not isBlock and not isBounds then
+        return origNC(self, ...)
+    end
     local origin, dir
-    if isRay then
-        origin, dir = select(1, ...), select(2, ...)
-        if typeof(origin) ~= "Vector3" or typeof(dir) ~= "Vector3" then return origNC(self, ...) end
-    else
+    if isRay or isSphere or isBlock then
+        origin = select(1, ...)
+        if typeof(origin) ~= "Vector3" then return origNC(self, ...) end
+        local darg = select(2, ...)
+        if isRay or isSphere then
+            if typeof(darg) ~= "Vector3" then return origNC(self, ...) end
+            dir = darg
+        elseif isBlock then
+            if typeof(darg) ~= "CFrame" then return origNC(self, ...) end
+            dir = darg.LookVector * 100
+        end
+    elseif isLegacy then
         local r = select(1, ...)
         if typeof(r) ~= "Ray" then return origNC(self, ...) end
         origin, dir = r.Origin, r.Direction
+    elseif isBounds then
+        local cf = select(1, ...)
+        if typeof(cf) ~= "CFrame" then return origNC(self, ...) end
+        origin = cf.Position
+        dir = cf.LookVector * 50
     end
-    if dir.Magnitude < 0.5 then return origNC(self, ...) end
-    -- origin guard
-    local lc = localRec()
-    local lr = lc and lc.root
-    if not lr or (origin - lr.Position).Magnitude > 60 then return origNC(self, ...) end
+    if not dir or dir.Magnitude < 0.5 then return origNC(self, ...) end
+    if not isPlayerOriginRay(origin) then return origNC(self, ...) end
+    if not rateLimitOk() then return origNC(self, ...) end
+    if not shotDelayOk() then return origNC(self, ...) end
+    local t = getValidTarget()
+    if not t then return origNC(self, ...) end
     -- hit chance
-    if S.Aimbot.HitChance < 100 and math.random(1, 100) > S.Aimbot.HitChance then return origNC(self, ...) end
-    local t = AIM.current
-    if not t or not t.rec.alive or not t.part or not t.part.Parent then return origNC(self, ...) end
+    if S.Aimbot.HitChance < 100 and math.random(1, 100) > S.Aimbot.HitChance then
+        return origNC(self, ...)
+    end
     local diff = t.pos - origin
     if diff.Magnitude < 0.5 then return origNC(self, ...) end
-    -- humanizer: small offset inside part
-    local aimPos = t.pos
-    local hs = math.clamp(S.Aimbot.HumanizerStrength, 0, 1)
-    if hs > 0 and t.part then
-        local sz = t.part.Size
-        aimPos = aimPos + Vector3.new(
-            (math.random() - 0.5) * sz.X * 0.4 * hs,
-            (math.random() - 0.5) * sz.Y * 0.3 * hs,
-            (math.random() - 0.5) * sz.Z * 0.4 * hs
-        )
-    end
+    local aimPos = humanize(t.part, t.pos)
     local diff2 = aimPos - origin
     if diff2.Magnitude < 0.5 then return origNC(self, ...) end
     local nd = diff2.Unit * dir.Magnitude
     if isRay then
         local a = { ... }; a[2] = nd
         return origNC(self, table.unpack(a))
-    else
+    elseif isSphere then
+        local a = { ... }; a[2] = nd
+        return origNC(self, table.unpack(a))
+    elseif isBlock then
+        local cf = select(1, ...)
+        local newCf = CFrame.new(cf.Position, aimPos)
+        local a = { ... }; a[1] = newCf; a[2] = (aimPos - cf.Position)
+        return origNC(self, table.unpack(a))
+    elseif isLegacy then
         local a = { ... }; a[1] = Ray.new(origin, nd)
         return origNC(self, table.unpack(a))
+    elseif isBounds then
+        local newCf = CFrame.new(cf.Position, aimPos)
+        local a = { ... }; a[1] = newCf
+        return origNC(self, table.unpack(a))
     end
+    return origNC(self, ...)
 end
+
 local function installHook()
     if hookOn or not CAP.hook then return end
     local ok, mt = pcall(getrawmetatable, game)
@@ -879,14 +1005,19 @@ local function uninstallHook()
 end
 installHook()
 App:Add(uninstallHook)
+watch("Aimbot.Silent", function(v) if v then installHook() end end)
 
--- Triggerbot (camera-center raycast)
+----------------------------------------------------------------
+-- TRIGGERBOT (camera-center raycast, proper wallcheck, cooldown)
+----------------------------------------------------------------
 local function triggerUpdate(dt)
     if not S.Trigger.Enabled or not cam or not CAP.mouse1 then return end
     AIM.triggerAcc = (AIM.triggerAcc or 0) + dt
     if AIM.triggerAcc < S.Trigger.Delay then return end
     local lc = localRec()
     if not lc or not lc.alive then return end
+    local now = os.clock()
+    if now - AIM.lastShot < S.Trigger.Cooldown then return end
     local origin = cam.CFrame.Position
     local dir = cam.CFrame.LookVector * 1000
     local ignore = { cam }
@@ -896,6 +1027,7 @@ local function triggerUpdate(dt)
     local ok, hit = pcall(WS.Raycast, WS, origin, dir, rayParams)
     internalRay = false
     if not ok or not hit then return end
+    -- найти владельца хита
     local inst = hit.Instance
     while inst and not inst:IsA("Model") do inst = inst.Parent end
     if not inst then return end
@@ -904,21 +1036,19 @@ local function triggerUpdate(dt)
     local rec = Cache.byPlayer[owner]
     if not rec or not rec.alive then return end
     if S.Trigger.OnlyEnemies and not rec.enemy then return end
+    -- wallcheck: хит должен быть ВНУТРИ char (не стена перед ним)
     if S.Trigger.WallCheck and not hit.Instance:IsDescendantOf(rec.char) then return end
+    -- min distance (5 studs)
+    if (hit.Position - origin).Magnitude < 5 then return end
     AIM.triggerAcc = 0
+    AIM.lastShot = now
     pcall(function() mouse1click() end)
 end
 App:Connect(RS.Heartbeat, triggerUpdate)
 
--- Clear caches on respawn
-App:Connect(LP.CharacterAdded, function()
-    AIM.current = nil; AIM.prevPlayer = nil
-    table.clear(velEMA); table.clear(velTS); table.clear(btHistory)
-end)
-
--- ================================================================
--- ESP (pooled, 30Hz)
--- ================================================================
+----------------------------------------------------------------
+-- ESP MODULE (pooled, stable cleanup)
+----------------------------------------------------------------
 local Pool = { free = {Square={}, Line={}, Text={}}, count = 0 }
 local function acquire(kind)
     if not CAP.drawing then return nil end
@@ -1058,17 +1188,17 @@ App:BindRender("esp", Enum.RenderPriority.Camera.Value + 2, function(dt)
     end
 end)
 
--- ================================================================
--- MOVEMENT MODULE
--- ================================================================
+----------------------------------------------------------------
+-- MOVEMENT MODULE (Speed / Fly / Noclip / InfJump / Bhop)
+----------------------------------------------------------------
 local MV = {
     origWalk = nil,
     fly = nil,
     ncOn = false, origCanCollide = setmetatable({}, {__mode="k"}),
-    advNoClip = {},
-    hxOn = false, origHitbox = setmetatable({}, {__mode="k"}),
     lastJumpTime = 0,
+    lastBhopJump = 0,
 }
+
 local function destroyFly()
     if MV.fly then
         pcall(function() MV.fly.lv:Destroy() end)
@@ -1077,6 +1207,7 @@ local function destroyFly()
         MV.fly = nil
     end
 end
+
 local function ensureFly(root)
     if MV.fly and MV.fly.lv and MV.fly.lv.Parent == root then return end
     destroyFly()
@@ -1090,27 +1221,17 @@ local function ensureFly(root)
     ao.Mode = Enum.OrientationAlignmentMode.OneAttachment; ao.Parent = root
     MV.fly = { att=att, lv=lv, ao=ao }
 end
-local function clearAdvNoClip()
-    for _, c in ipairs(MV.advNoClip) do
-        if c.Connected then pcall(function() c:Disconnect() end) end
-    end
-    table.clear(MV.advNoClip)
-end
-local function applyNoClip(enable, advanced)
-    clearAdvNoClip()
+
+local function applyNoClip(enable)
     local rec = localRec()
     if not rec or not rec.char then return end
     for _, part in ipairs(rec.char:GetDescendants()) do
         if part:IsA("BasePart") then
             if enable then
-                if MV.origCanCollide[part] == nil then MV.origCanCollide[part] = part.CanCollide end
-                part.CanCollide = false
-                if advanced then
-                    local c = part:GetPropertyChangedSignal("CanCollide"):Connect(function()
-                        if part.CanCollide then part.CanCollide = false end
-                    end)
-                    MV.advNoClip[#MV.advNoClip+1] = c
+                if MV.origCanCollide[part] == nil then
+                    MV.origCanCollide[part] = part.CanCollide
                 end
+                part.CanCollide = false
             else
                 if MV.origCanCollide[part] ~= nil then
                     part.CanCollide = MV.origCanCollide[part]
@@ -1120,41 +1241,14 @@ local function applyNoClip(enable, advanced)
         end
     end
 end
-local function applyHitbox(enable, size, tr)
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP and plr.Character then
-            for _, name in ipairs({"Head","UpperTorso","LowerTorso","Torso"}) do
-                local part = plr.Character:FindFirstChild(name)
-                if part and part:IsA("BasePart") then
-                    if enable then
-                        if MV.origHitbox[part] == nil then
-                            MV.origHitbox[part] = { Size = part.Size, Transparency = part.Transparency }
-                        end
-                        part.Size = Vector3.new(size, size, size)
-                        part.Transparency = tr
-                    else
-                        if MV.origHitbox[part] then
-                            part.Size = MV.origHitbox[part].Size
-                            part.Transparency = MV.origHitbox[part].Transparency
-                            MV.origHitbox[part] = nil
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
+
 onChar(function(rec)
     if rec == localRec() then
         MV.origWalk = nil
-        MV.ncOn = false; table.clear(MV.origCanCollide); clearAdvNoClip()
-        table.clear(MV.origHitbox); MV.hxOn = false
+        MV.ncOn = false
+        table.clear(MV.origCanCollide)
         destroyFly()
     end
-end)
--- re-apply hitbox when others respawn
-App:Connect(Players.PlayerAdded, function(plr)
-    plr.CharacterAdded:Connect(function() task.wait(0.2) end)
 end)
 
 App:Connect(RS.Heartbeat, function(dt)
@@ -1180,36 +1274,10 @@ App:Connect(RS.Heartbeat, function(dt)
         if hum.WalkSpeed ~= MV.origWalk then hum.WalkSpeed = MV.origWalk end
         MV.origWalk = nil
     end
-    -- Velocity multiplier
-    if S.Move.VelMult and S.Move.VelMult > 1 then
-        local md = hum.MoveDirection
-        if md.Magnitude > 0.1 then
-            local v = root.AssemblyLinearVelocity
-            local target = md * (hum.WalkSpeed * S.Move.VelMult)
-            local cap = S.Move.VelCap
-            if target.Magnitude > cap then target = target.Unit * cap end
-            root.AssemblyLinearVelocity = Vector3.new(target.X, v.Y, target.Z)
-        end
-    end
     -- NoClip
-    local nc = S.Move.NoClip and true or false
-    local adv = S.Move.NoClipAdvanced and true or false
-    if nc ~= MV.ncOn or (nc and adv) then
-        applyNoClip(nc, adv)
-        MV.ncOn = nc
-    end
-    -- Hitbox
-    if S.Move.Hitbox ~= MV.hxOn then
-        applyHitbox(S.Move.Hitbox, S.Move.HitboxSize, S.Move.HitboxTransparency)
-        MV.hxOn = S.Move.Hitbox
-    elseif S.Move.Hitbox then
-        -- keep size updated if slider changed
-        for part in pairs(MV.origHitbox) do
-            if part.Parent then
-                part.Size = Vector3.new(S.Move.HitboxSize, S.Move.HitboxSize, S.Move.HitboxSize)
-                part.Transparency = S.Move.HitboxTransparency
-            end
-        end
+    if S.Move.NoClip ~= MV.ncOn then
+        applyNoClip(S.Move.NoClip)
+        MV.ncOn = S.Move.NoClip
     end
     -- Fly
     if S.Move.Fly then
@@ -1230,7 +1298,8 @@ App:Connect(RS.Heartbeat, function(dt)
         destroyFly()
     end
 end)
--- InfJump
+
+-- InfJump (with cooldown)
 App:Connect(UIS.JumpRequest, function()
     local now = tick()
     if S.Move.InfJump and now - MV.lastJumpTime > S.Move.InfJumpCooldown then
@@ -1245,10 +1314,13 @@ App:Connect(UIS.JumpRequest, function()
         end
     end
 end)
--- Bhop
+
+-- Bhop (auto-jump on landing when Space held)
 App:Connect(RS.Heartbeat, function()
     if not S.Move.Bhop then return end
     if not UIS:IsKeyDown(Enum.KeyCode.Space) then return end
+    local now = tick()
+    if now - MV.lastBhopJump < 0.1 then return end
     local rec = localRec()
     if not rec or not rec.hum then return end
     local s = rec.hum:GetState()
@@ -1256,28 +1328,29 @@ App:Connect(RS.Heartbeat, function()
     or s == Enum.HumanoidStateType.Running
     or s == Enum.HumanoidStateType.RunningNoPhysics then
         rec.hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        MV.lastBhopJump = now
     end
 end)
 
--- ================================================================
--- ANTI-AIM MODULE
--- ================================================================
+----------------------------------------------------------------
+-- ANTI-AIM MODULE (RenderStepped priority Camera+5 to beat animations)
+----------------------------------------------------------------
 local AA = {
     rootJ=nil, neck=nil, lowerJ=nil,
     origRoot=nil, origNeck=nil, origLower=nil,
     jitterWalk=0, patternIdx=1, patternTime=0,
     switchSide=1, lastSwitchT=0,
-    bufferPhase=0, bufferOrigCF=nil, lastBufferT=0,
     fl={phase="release", accumulator=0, bufferedCF=nil, pulseCount=0},
 }
+
 onChar(function(rec)
     if rec == localRec() then
         AA.rootJ=nil; AA.neck=nil; AA.lowerJ=nil
         AA.origRoot=nil; AA.origNeck=nil; AA.origLower=nil
         AA.fl.phase="release"; AA.fl.accumulator=0; AA.fl.bufferedCF=nil
-        AA.bufferPhase=0; AA.bufferOrigCF=nil
     end
 end)
+
 local function getJoints()
     local rec = localRec()
     if not rec or not rec.char or not rec.root then return end
@@ -1297,6 +1370,7 @@ local function getJoints()
         end
     end
 end
+
 local function computeJitter()
     if not S.AA.Jitter then return 0 end
     local max = math.rad(S.AA.JitterAngle)
@@ -1323,6 +1397,7 @@ local function computeJitter()
     end
     return 0
 end
+
 local function computeDesync()
     if not S.AA.Desync then return 0 end
     local str = math.clamp(S.AA.DesyncStrength, 0, 1)
@@ -1344,31 +1419,11 @@ local function computeDesync()
     end
     return 0
 end
-local function applyBufferTeleport(root)
-    if not S.AA.Desync or not S.AA.BufferTeleport then
-        AA.bufferPhase = 0; AA.bufferOrigCF = nil; return
-    end
-    if S.Move.Fly then return end
-    local now = tick()
-    if AA.bufferPhase == 0 then
-        if now - AA.lastBufferT > 0.1 then
-            AA.bufferOrigCF = root.CFrame
-            local off = CFrame.new((math.random()-0.5)*4, 0, (math.random()-0.5)*4)
-            pcall(function() root.CFrame = AA.bufferOrigCF * off end)
-            AA.bufferPhase = 1; AA.lastBufferT = now
-        end
-    else
-        if AA.bufferOrigCF then pcall(function() root.CFrame = AA.bufferOrigCF end) end
-        AA.bufferOrigCF = nil; AA.bufferPhase = 0
-    end
-end
+
 local function applyFakeLag(dt, root, hum)
     if not S.AA.FakeLag then
         if AA.fl.phase == "lag" then
             pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-            if S.AA.FakeLagBackForth and AA.fl.bufferedCF then
-                pcall(function() root.CFrame = AA.fl.bufferedCF end)
-            end
             AA.fl.bufferedCF = nil; AA.fl.phase = "release"
         end
         AA.fl.accumulator = 0
@@ -1389,18 +1444,15 @@ local function applyFakeLag(dt, root, hum)
         local scale = math.clamp(v / 30, 0.3, 1)
         intensity = (S.AA.FakeLagIntensity / 60) * scale
         frequency = S.AA.FakeLagFrequency
-    elseif mode == "Switch" then
-        intensity = (fl.pulseCount % 2 == 0) and 0.05 or 0.15
-        frequency = S.AA.FakeLagFrequency
     else
         intensity = S.AA.FakeLagIntensity / 60
         frequency = S.AA.FakeLagFrequency
     end
     local cycle = 1 / math.max(frequency, 0.1)
     local lagPhase = math.min(intensity, cycle * 0.7)
-    local releasePhase = cycle - lagPhase
+    local releasePhT = cycle - lagPhase
     if fl.phase == "release" then
-        if fl.accumulator >= releasePhase then
+        if fl.accumulator >= releasePhT then
             fl.bufferedCF = root.CFrame
             pcall(function()
                 root.AssemblyLinearVelocity = Vector3.zero
@@ -1412,9 +1464,6 @@ local function applyFakeLag(dt, root, hum)
     else
         if fl.accumulator >= lagPhase then
             pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-            if S.AA.FakeLagBackForth and fl.bufferedCF then
-                pcall(function() root.CFrame = fl.bufferedCF end)
-            end
             fl.bufferedCF = nil; fl.phase = "release"; fl.accumulator = 0
         else
             pcall(function()
@@ -1425,13 +1474,13 @@ local function applyFakeLag(dt, root, hum)
     end
 end
 
-App:Connect(RS.Heartbeat, function(dt)
+-- RenderStepped priority Camera+5 — ПЕРЕБИВАЕТ серверные апдейты анимаций
+App:BindRender("aa", Enum.RenderPriority.Camera.Value + 5, function(dt)
     local rec = localRec()
     if not rec or not rec.root then return end
     local root = rec.root
     getJoints()
     local anyAA = S.AA.Jitter or S.AA.Desync or S.AA.HideHead
-        or S.AA.ResolverBypass or S.AA.Predictor
     if not anyAA then
         if AA.rootJ and AA.origRoot and AA.rootJ.C0 ~= AA.origRoot then AA.rootJ.C0 = AA.origRoot end
         if AA.neck and AA.origNeck and AA.neck.C0 ~= AA.origNeck then AA.neck.C0 = AA.origNeck end
@@ -1439,18 +1488,7 @@ App:Connect(RS.Heartbeat, function(dt)
     else
         local jit = computeJitter()
         local des = computeDesync()
-        local micro = S.AA.ResolverBypass and ((math.random()-0.5)*2*S.AA.MicroJitter) or 0
-        local bias = 0
-        if S.AA.Predictor and rec.hum then
-            local md = rec.hum.MoveDirection
-            if md.Magnitude > 0.1 and cam then
-                local dot = md:Dot(cam.CFrame.RightVector)
-                if math.abs(dot) > 0.1 then
-                    bias = -math.sign(dot) * math.rad(S.AA.PredictorAngle)
-                end
-            end
-        end
-        local total = jit + des + bias + micro
+        local total = jit + des
         if AA.rootJ and AA.origRoot then AA.rootJ.C0 = AA.origRoot * CFrame.Angles(0, total, 0) end
         if S.AA.Desync and AA.lowerJ and AA.origLower then
             AA.lowerJ.C0 = AA.origLower * CFrame.Angles(0, des * 0.5, 0)
@@ -1459,53 +1497,229 @@ App:Connect(RS.Heartbeat, function(dt)
         end
         if S.AA.HideHead and AA.neck and AA.origNeck then
             local mode = S.AA.HideHeadMode
-            local off = S.AA.HideHeadOffset
             if mode == "Down" then
                 AA.neck.C0 = AA.origNeck * CFrame.Angles(math.rad(-90), 0, 0)
             elseif mode == "Offset" then
-                AA.neck.C0 = AA.origNeck * CFrame.new(0, -off, 0) * CFrame.Angles(0, math.rad(180), 0)
+                AA.neck.C0 = AA.origNeck * CFrame.new(0, -1.5, 0) * CFrame.Angles(0, math.rad(180), 0)
             elseif mode == "Spin" then
                 AA.neck.C0 = AA.origNeck * CFrame.Angles(0, tick() * 6, 0)
-            else
+            else -- Back
                 AA.neck.C0 = AA.origNeck * CFrame.Angles(0, math.rad(180), 0)
             end
         elseif AA.neck and AA.origNeck and AA.neck.C0 ~= AA.origNeck then
             AA.neck.C0 = AA.origNeck
         end
     end
-    applyBufferTeleport(root)
     if rec.hum then applyFakeLag(dt, root, rec.hum) end
-    -- spinbot
-    if S.Rage.Spinbot then
-        local rad = math.rad(S.Rage.SpinSpeed)
-        local mode = S.Rage.SpinMode
-        local rot
-        if mode == "Yaw" then rot = CFrame.Angles(0, rad, 0)
-        elseif mode == "Pitch" then rot = CFrame.Angles(rad, 0, 0)
-        elseif mode == "Roll" then rot = CFrame.Angles(0, 0, rad)
-        else
-            local axis = math.random(1, 3)
-            rot = (axis==1) and CFrame.Angles(0,rad,0)
-                or (axis==2) and CFrame.Angles(rad,0,0)
-                or CFrame.Angles(0,0,rad)
-        end
-        root.CFrame = root.CFrame * rot
-    end
 end)
+
 App:Add(function()
     if AA.rootJ and AA.origRoot then pcall(function() AA.rootJ.C0 = AA.origRoot end) end
     if AA.neck and AA.origNeck then pcall(function() AA.neck.C0 = AA.origNeck end) end
     if AA.lowerJ and AA.origLower then pcall(function() AA.lowerJ.C0 = AA.origLower end) end
 end)
+
 App:Connect(LP.Idled, function()
     if S.Misc.AntiAFK then
         pcall(function() VirtualUser:CaptureController(); VirtualUser:ClickButton2(Vector2.new()) end)
     end
 end)
 
--- ================================================================
+----------------------------------------------------------------
+-- RAGE MODULE (FE-weak only, separate tab, all OFF by default)
+-- Честный disclaimer: в современных FE играх большинство этих функций не работают.
+----------------------------------------------------------------
+local RAGE = {
+    lagParts = {},
+    flingTargets = {},
+    remoteTargets = {},
+    lastVoidTP = 0,
+    lastRemoteSpam = 0,
+}
+
+-- MASS FLING: пытается создать VehicleSeat + BodyVelocity на чужих игроках
+-- Работает ТОЛЬКО если клиент имеет network ownership над их character (FE-weak игры)
+local function tryFling(rec)
+    if not rec or not rec.root or not rec.alive then return end
+    pcall(function()
+        local bv = Instance.new("BodyVelocity")
+        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bv.Velocity = Vector3.new(
+            (math.random() - 0.5) * 500,
+            300,
+            (math.random() - 0.5) * 500
+        )
+        bv.Parent = rec.root
+        task.delay(0.5, function() pcall(function() bv:Destroy() end) end)
+    end)
+end
+
+-- VOID TP: телепорт в void (0, -500, 0)
+-- Работает только если client-authoritative
+local function tryVoidTP(rec)
+    if not rec or not rec.root then return end
+    pcall(function()
+        rec.root.CFrame = CFrame.new(0, -500, 0)
+    end)
+end
+
+-- REMOTE SPAM: сканер RemoteEvent в ReplicatedStorage
+local function scanRemotes()
+    RAGE.remoteTargets = {}
+    local function scan(inst, depth)
+        if depth > 5 then return end
+        for _, child in ipairs(inst:GetChildren()) do
+            if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
+                table.insert(RAGE.remoteTargets, child)
+            end
+            if child:IsA("Folder") or child:IsA("Model") then
+                scan(child, depth + 1)
+            end
+        end
+    end
+    pcall(function() scan(ReplicatedStorage, 0) end)
+end
+
+local function spamRemotes()
+    if #RAGE.remoteTargets == 0 then scanRemotes() end
+    for i = 1, math.min(10, #RAGE.remoteTargets) do
+        local r = RAGE.remoteTargets[i]
+        if r and r.Parent then
+            pcall(function()
+                if r:IsA("RemoteEvent") then
+                    r:FireServer("spam", math.random(1, 1000))
+                elseif r:IsA("RemoteFunction") then
+                    r:InvokeServer("spam", math.random(1, 1000))
+                end
+            end)
+        end
+    end
+end
+
+-- LAG MACHINE: создание нагружающих частей в Workspace
+-- Работает ТОЛЬКО если клиент может создавать объекты в Workspace (FE-weak)
+local function createLagMachine()
+    if #RAGE.lagParts > 0 then return end
+    local rec = localRec()
+    if not rec or not rec.root then return end
+    local count = math.clamp(S.Rage.LagMachineCount, 5, 50)
+    for i = 1, count do
+        pcall(function()
+            local p = Instance.new("Part")
+            p.Size = Vector3.new(1, 1, 1)
+            p.Anchored = false
+            p.CanCollide = false
+            p.Transparency = 1
+            p.CFrame = rec.root.CFrame * CFrame.new(
+                (math.random() - 0.5) * 20,
+                (math.random() - 0.5) * 20,
+                (math.random() - 0.5) * 20
+            )
+            -- AngularVelocity для нагрузки физики
+            local av = Instance.new("AngularVelocity")
+            av.AngularVelocity = Vector3.new(
+                (math.random() - 0.5) * 100,
+                (math.random() - 0.5) * 100,
+                (math.random() - 0.5) * 100
+            )
+            av.MaxTorque = math.huge
+            local att = Instance.new("Attachment")
+            att.Parent = p
+            av.Attachment0 = att
+            av.Parent = p
+            p.Parent = WS
+            table.insert(RAGE.lagParts, p)
+        end)
+    end
+end
+
+local function destroyLagMachine()
+    for _, p in ipairs(RAGE.lagParts) do
+        pcall(function() p:Destroy() end)
+    end
+    table.clear(RAGE.lagParts)
+end
+
+-- UNANCHOR: попытка SetNetworkOwner на unanchored parts в Workspace
+local function tryUnanchor()
+    pcall(function()
+        local rec = localRec()
+        if not rec or not rec.root then return end
+        for _, part in ipairs(WS:GetDescendants()) do
+            if part:IsA("BasePart") and not part.Anchored and part.Parent ~= rec.char then
+                pcall(function() part:SetNetworkOwner(LP) end)
+            end
+        end
+    end)
+end
+
+-- Rage Heartbeat loop
+App:Connect(RS.Heartbeat, function(dt)
+    local now = tick()
+    -- Mass Fling
+    if S.Rage.MassFling then
+        if S.Rage.FlingTarget == "Nearest" then
+            local lc = localRec()
+            if lc and lc.root then
+                local best, bestDist = nil, math.huge
+                for plr, rec in pairs(Cache.byPlayer) do
+                    if plr ~= LP and rec.alive and rec.root and rec.enemy then
+                        local d = (rec.root.Position - lc.root.Position).Magnitude
+                        if d < bestDist then bestDist = d; best = rec end
+                    end
+                end
+                if best and bestDist < 50 then tryFling(best) end
+            end
+        elseif S.Rage.FlingTarget == "All" then
+            for plr, rec in pairs(Cache.byPlayer) do
+                if plr ~= LP and rec.alive and rec.root and rec.enemy then
+                    tryFling(rec)
+                end
+            end
+        end
+    end
+    -- Void TP
+    if S.Rage.VoidTP and now - RAGE.lastVoidTP > S.Rage.VoidTPInterval then
+        RAGE.lastVoidTP = now
+        local lc = localRec()
+        if lc and lc.root then
+            local best, bestDist = nil, math.huge
+            for plr, rec in pairs(Cache.byPlayer) do
+                if plr ~= LP and rec.alive and rec.root and rec.enemy then
+                    local d = (rec.root.Position - lc.root.Position).Magnitude
+                    if d < bestDist then bestDist = d; best = rec end
+                end
+            end
+            if best and bestDist < 50 then tryVoidTP(best) end
+        end
+    end
+    -- Remote Spam
+    if S.Rage.RemoteSpam and now - RAGE.lastRemoteSpam > S.Rage.RemoteSpamInterval then
+        RAGE.lastRemoteSpam = now
+        spamRemotes()
+    end
+    -- Lag Machine
+    if S.Rage.LagMachine then
+        createLagMachine()
+    elseif #RAGE.lagParts > 0 then
+        destroyLagMachine()
+    end
+    -- Unanchor
+    if S.Rage.Unanchor then
+        tryUnanchor()
+    end
+end)
+
+-- Cleanup rage on unload
+App:Add(function()
+    destroyLagMachine()
+    table.clear(RAGE.flingTargets)
+    table.clear(RAGE.remoteTargets)
+end)
+
+----------------------------------------------------------------
 -- WATERMARK + KEYBIND DISPLAY
--- ================================================================
+----------------------------------------------------------------
 local wmText, kdText = nil, nil
 if CAP.drawing then
     local ok1, t1 = pcall(function() return Drawing.new("Text") end)
@@ -1517,6 +1731,7 @@ if CAP.drawing then
         App:Add(function() pcall(function() t2:Remove() end) end)
     end
 end
+
 local stateOf = function(p) return G(p) and "[ON]" or "[OFF]" end
 local diagAcc = 0
 App:Connect(RS.Heartbeat, function(dt)
@@ -1526,7 +1741,7 @@ App:Connect(RS.Heartbeat, function(dt)
     if wmText then
         wmText.Visible = S.Misc.Watermark
         if S.Misc.Watermark then
-            wmText.Text = string.format("unknown v7 // fps %d // proj %d/s // ray %d/s",
+            wmText.Text = string.format("unknown v8 // fps %d // proj %d/s // ray %d/s",
                 math.floor(Diag.fps), Diag.projRate, Diag.rayRate)
             wmText.Position = Vector2.new(10, 10)
             wmText.Color = Color3.fromRGB(235,235,240)
@@ -1536,24 +1751,25 @@ App:Connect(RS.Heartbeat, function(dt)
         kdText.Visible = S.Misc.KeybindDisplay
         if S.Misc.KeybindDisplay then
             local vp = cam.ViewportSize
-            kdText.Position = Vector2.new(10, vp.Y * 0.5 - 110)
+            kdText.Position = Vector2.new(10, vp.Y * 0.5 - 120)
             kdText.Color = Color3.fromRGB(235,235,240)
             kdText.Text = string.format(
-                "== KEYBINDS ==\n[%s] Aimbot    %s\n[%s] Silent    %s\n[%s] Trigger   %s\n[%s] AntiAim   %s\n[%s] ESP       %s\n[%s] TargetLock %s",
+                "== KEYBINDS ==\n[%s] Aimbot    %s\n[%s] Silent    %s\n[%s] Trigger   %s\n[%s] AntiAim   %s\n[%s] ESP       %s\n[%s] TargetLock %s\n[%s] PANIC     %s",
                 G("Keys.Aimbot")  or "?", stateOf("Aimbot.Enabled"),
                 G("Keys.Silent")  or "?", stateOf("Aimbot.Silent"),
                 G("Keys.Trigger") or "?", stateOf("Trigger.Enabled"),
                 G("Keys.AA")      or "?", stateOf("AA.Jitter"),
                 G("Keys.ESP")     or "?", stateOf("ESP.Enabled"),
-                G("Keys.Lock")    or "?", AIM.lockEnabled and "[LOCK]" or "[off]"
+                G("Keys.Lock")    or "?", G("Aimbot.TargetLock") and "[LOCK]" or "[off]",
+                G("Keys.Panic")   or "?", "[END]"
             )
         end
     end
 end)
 
--- ================================================================
--- UI WIRING
--- ================================================================
+----------------------------------------------------------------
+-- UI WIRING (Combat / Visuals / Move / AntiAim / Rage / Misc)
+----------------------------------------------------------------
 -- COMBAT
 local tCombat = addTab("combat")
 tCombat:Section("aimbot")
@@ -1570,9 +1786,9 @@ tCombat:Slider("Smoothing",        "Aimbot.Smoothing", 0.01, 1.0, 0.01)
 tCombat:Slider("Sensitivity",      "Aimbot.Sensitivity", 0.1, 3.0, 0.05, "x")
 tCombat:Slider("Prediction",       "Aimbot.Prediction", 0, 0.5, 0.01, "s")
 tCombat:Toggle("Predict gravity",  "Aimbot.PredictGravity")
-tCombat:Slider("Hitbox offset Y",  "Aimbot.HitboxOffset", -3, 3, 0.1, "st")
 tCombat:Slider("Hit chance",       "Aimbot.HitChance", 0, 100, 5, "%")
 tCombat:Slider("Humanizer",        "Aimbot.HumanizerStrength", 0, 1, 0.05)
+tCombat:Dropdown("Bone priority",  "Aimbot.Bone", {"Head", "Torso", "Nearest"})
 tCombat:Section("backtrack")
 tCombat:Toggle("Backtrack",        "Aimbot.Backtrack")
 tCombat:Slider("Backtrack time",   "Aimbot.BacktrackTime", 0.05, 0.5, 0.05, "s")
@@ -1581,6 +1797,7 @@ tCombat:Toggle("TriggerBot",       "Trigger.Enabled")
 tCombat:Toggle("Trigger enemies only","Trigger.OnlyEnemies")
 tCombat:Toggle("Trigger wall check","Trigger.WallCheck")
 tCombat:Slider("Trigger delay",    "Trigger.Delay", 0, 0.5, 0.01, "s")
+tCombat:Slider("Trigger cooldown", "Trigger.Cooldown", 0, 0.5, 0.01, "s")
 tCombat:Section("keybinds")
 tCombat:Keybind("Aimbot key",      "Keys.Aimbot")
 tCombat:Keybind("Silent key",      "Keys.Silent")
@@ -1610,31 +1827,19 @@ tMove:Section("speed hack")
 tMove:Toggle("Speed",           "Move.Speed")
 tMove:Dropdown("Mode",          "Move.SpeedMode", {"Walk", "Vel"})
 tMove:Slider("Speed value",     "Move.SpeedValue", 16, 200, 1)
-tMove:Button("x2  (32)",  function() P("Move.Speed", true); P("Move.SpeedValue", 32) end)
-tMove:Button("x3  (48)",  function() P("Move.Speed", true); P("Move.SpeedValue", 48) end)
-tMove:Button("x5  (80)",  function() P("Move.Speed", true); P("Move.SpeedValue", 80) end)
-tMove:Button("x8 (128)",  function() P("Move.Speed", true); P("Move.SpeedValue", 128) end)
-tMove:Button("OFF",       function() P("Move.Speed", false) end)
-tMove:Keybind("Speed key",     "Keys.Speed")
-tMove:Section("velocity")
-tMove:Slider("Vel multiplier",  "Move.VelMult", 1.0, 5.0, 0.1, "x")
 tMove:Slider("Velocity cap",    "Move.VelCap", 50, 500, 10)
+tMove:Keybind("Speed key",     "Keys.Speed")
 tMove:Section("fly")
 tMove:Toggle("Fly",             "Move.Fly")
 tMove:Slider("Fly speed",       "Move.FlyValue", 20, 200, 5)
 tMove:Keybind("Fly key",        "Keys.Fly")
 tMove:Section("noclip")
 tMove:Toggle("NoClip",          "Move.NoClip")
-tMove:Toggle("Advanced NoClip", "Move.NoClipAdvanced")
 tMove:Section("jump")
 tMove:Toggle("Infinite Jump",   "Move.InfJump")
 tMove:Slider("Jump boost",      "Move.InfJumpBoost", 0, 100, 5)
 tMove:Slider("Jump cooldown",   "Move.InfJumpCooldown", 0.1, 0.5, 0.02, "s")
 tMove:Toggle("Bhop",            "Move.Bhop")
-tMove:Section("hitbox expander")
-tMove:Toggle("Hitbox expander", "Move.Hitbox")
-tMove:Slider("Hitbox size",     "Move.HitboxSize", 3, 25, 1)
-tMove:Slider("Transparency",    "Move.HitboxTransparency", 0, 1, 0.05)
 
 -- ANTIAIM
 local tAA = addTab("antiaim")
@@ -1648,49 +1853,59 @@ tAA:Toggle("Desync",          "AA.Desync")
 tAA:Dropdown("Mode",          "AA.DesyncMode", {"Static","Spin","Random","Switch","Backwards"})
 tAA:Slider("Desync speed",    "AA.DesyncSpeed", 10, 200, 5)
 tAA:Slider("Desync strength", "AA.DesyncStrength", 0, 1, 0.05)
-tAA:Toggle("Buffer teleport", "AA.BufferTeleport")
 tAA:Section("hide head")
 tAA:Toggle("Hide head",       "AA.HideHead")
 tAA:Dropdown("Mode",          "AA.HideHeadMode", {"Back","Down","Offset","Spin"})
-tAA:Slider("Offset",          "AA.HideHeadOffset", 0, 5, 0.1, "st")
 tAA:Section("fake lag")
 tAA:Toggle("Fake lag",        "AA.FakeLag")
-tAA:Dropdown("Mode",          "AA.FakeLagMode", {"Static","Random","Adaptive","Switch"})
+tAA:Dropdown("Mode",          "AA.FakeLagMode", {"Static","Random","Adaptive"})
 tAA:Slider("Intensity",       "AA.FakeLagIntensity", 1, 15, 0.5)
 tAA:Slider("Frequency",       "AA.FakeLagFrequency", 1, 5, 0.5, "Hz")
-tAA:Toggle("Back and forth",  "AA.FakeLagBackForth")
-tAA:Section("anti-resolver")
-tAA:Toggle("Resolver bypass", "AA.ResolverBypass")
-tAA:Slider("Micro jitter",    "AA.MicroJitter", 0, 0.2, 0.01)
-tAA:Toggle("Movement predictor","AA.Predictor")
-tAA:Slider("Predictor angle", "AA.PredictorAngle", 0, 90, 5)
 tAA:Keybind("AA key",         "Keys.AA")
 
--- RAGE + MISC
+-- RAGE (FE-weak only, all OFF by default)
 local tRage = addTab("rage")
-tRage:Section("spinbot")
-tRage:Toggle("Spinbot",       "Rage.Spinbot")
-tRage:Slider("Spin speed",    "Rage.SpinSpeed", 5, 100, 5)
-tRage:Dropdown("Spin mode",   "Rage.SpinMode", {"Yaw","Pitch","Roll","Random"})
+tRage:Section("⚠ WARNING: FE-weak games only ⚠")
+tRage:Label("Most rage features do NOT work in modern FE games.")
+tRage:Label("They work only in old/weak games with client-authoritative physics.")
+tRage:Label("Use at your own risk — may get you kicked.")
+tRage:Section("mass fling")
+tRage:Toggle("Mass Fling",       "Rage.MassFling")
+tRage:Dropdown("Target",         "Rage.FlingTarget", {"Nearest", "All"})
+tRage:Section("void teleport")
+tRage:Toggle("Void TP loop",     "Rage.VoidTP")
+tRage:Slider("TP interval",      "Rage.VoidTPInterval", 0.1, 2, 0.1, "s")
+tRage:Section("remote spam")
+tRage:Toggle("Remote spam",      "Rage.RemoteSpam")
+tRage:Slider("Spam interval",    "Rage.RemoteSpamInterval", 0.05, 1, 0.05, "s")
+tRage:Section("lag machine")
+tRage:Toggle("FE Lag Machine",   "Rage.LagMachine")
+tRage:Slider("Parts count",      "Rage.LagMachineCount", 5, 50, 5)
+tRage:Section("network")
+tRage:Toggle("Unanchor parts",   "Rage.Unanchor")
 
+-- MISC
 local tMisc = addTab("misc")
 tMisc:Section("display")
 tMisc:Toggle("Watermark",        "Misc.Watermark")
 tMisc:Toggle("Keybind display",  "Misc.KeybindDisplay")
 tMisc:Toggle("Anti-AFK",         "Misc.AntiAFK")
 tMisc:Keybind("UI key",          "Keys.UI")
+tMisc:Section("panic")
+tMisc:Keybind("Panic key",       "Keys.Panic")
+tMisc:Label("Panic instantly disables: Aimbot, Silent, Trigger, ESP, all Rage")
 tMisc:Section("config")
 tMisc:Button("save config",      function()
     local ok = saveConfig()
-    print("[unknown] save:", ok and "ok" or "fail")
+    print("[unknown v8] save:", ok and "ok" or "fail")
 end)
 tMisc:Button("reload config",    function() loadConfig() end)
 tMisc:Button("unload",           function() Unload() end)
 tMisc:Label("safe inject: all features start OFF")
 
--- ================================================================
+----------------------------------------------------------------
 -- MINIMIZE + HIDE
--- ================================================================
+----------------------------------------------------------------
 local minimized = false
 minBtn.MouseButton1Click:Connect(function()
     minimized = not minimized
@@ -1700,22 +1915,12 @@ minBtn.MouseButton1Click:Connect(function()
 end)
 hideBtn.MouseButton1Click:Connect(function() main.Visible = false end)
 
--- ================================================================
--- GLOBAL INPUT
--- ================================================================
-watch("Aimbot.TargetLock", function(v)
-    if v then
-        -- enable lock only if there is current target
-        if AIM.current then AIM.lockEnabled = true end
-    else
-        AIM.lockEnabled = false
-    end
-end)
-watch("Aimbot.Enabled", function(v)
-    if not v then AIM.current = nil; AIM.lockEnabled = false end
-end)
-
+----------------------------------------------------------------
+-- GLOBAL INPUT (UI + feature toggles + PANIC)
+----------------------------------------------------------------
 App:Connect(UIS.InputBegan, function(input, processed)
+    if processed then return end
+    -- capturing keybind
     if capturing then
         if input.KeyCode ~= Enum.KeyCode.Unknown then
             P(capturing, input.KeyCode.Name)
@@ -1723,8 +1928,24 @@ App:Connect(UIS.InputBegan, function(input, processed)
         capturing = nil
         return
     end
-    if processed then return end
     local kc = input.KeyCode.Name
+    -- PANIC KEY: мгновенное выключение всего опасного
+    if kc == G("Keys.Panic") then
+        P("Aimbot.Enabled", false, true)
+        P("Aimbot.Silent", false, true)
+        P("Aimbot.TargetLock", false, true)
+        P("Trigger.Enabled", false, true)
+        P("ESP.Enabled", false, true)
+        P("ESP.Chams", false, true)
+        P("Rage.MassFling", false, true)
+        P("Rage.VoidTP", false, true)
+        P("Rage.RemoteSpam", false, true)
+        P("Rage.LagMachine", false, true)
+        P("Rage.Unanchor", false, true)
+        AIM.current = nil; AIM.prevPlayer = nil; AIM.lockEnabled = false
+        print("[unknown v8] PANIC — all features disabled")
+        return
+    end
     if kc == G("Keys.UI")      then main.Visible = not main.Visible; return end
     if kc == G("Keys.Aimbot")  and G("Keys.Aimbot")  ~= "" then P("Aimbot.Enabled", not G("Aimbot.Enabled")) end
     if kc == G("Keys.Silent")  and G("Keys.Silent")  ~= "" then P("Aimbot.Silent",  not G("Aimbot.Silent")) end
@@ -1737,48 +1958,86 @@ App:Connect(UIS.InputBegan, function(input, processed)
         P("AA.Jitter", newState); P("AA.Desync", newState)
     end
     if kc == G("Keys.Lock")    and G("Keys.Lock")    ~= "" then
+        -- Q-toggle пишет напрямую в Aimbot.TargetLock (единый источник правды)
         if AIM.current then
-            AIM.lockEnabled = not AIM.lockEnabled
-            P("Aimbot.TargetLock", AIM.lockEnabled, true)
+            P("Aimbot.TargetLock", not G("Aimbot.TargetLock"))
         end
     end
 end)
 
--- ================================================================
--- LOAD + STARTUP
--- ================================================================
+----------------------------------------------------------------
+-- CHARACTER ADDED — full reset всех модулей
+----------------------------------------------------------------
+App:Connect(LP.CharacterAdded, function()
+    AIM.current = nil; AIM.prevPlayer = nil
+    table.clear(velEMA); table.clear(velTS); table.clear(btHistory)
+    destroyLagMachine()
+    destroyFly()
+    for part, can in pairs(MV.origCanCollide) do
+        if part.Parent then pcall(function() part.CanCollide = can end) end
+    end
+    table.clear(MV.origCanCollide)
+    MV.origWalk = nil; MV.ncOn = false
+    AA.rootJ=nil; AA.neck=nil; AA.lowerJ=nil
+    AA.origRoot=nil; AA.origNeck=nil; AA.origLower=nil
+    AA.fl.phase="release"; AA.fl.accumulator=0; AA.fl.bufferedCF=nil
+end)
+
+----------------------------------------------------------------
+-- LOAD + SAFE INJECT + STARTUP
+----------------------------------------------------------------
 loadConfig()
--- SAFE INJECT: every feature flag forced off (except keybinds and display flags)
+-- SAFE INJECT: все опасные функции OFF при загрузке (UI показывает состояние)
 for _, path in ipairs({
-    "Aimbot.Enabled","Aimbot.Silent","Aimbot.Backtrack","Aimbot.TargetLock",
+    "Aimbot.Enabled","Aimbot.Silent","Aimbot.TargetLock","Aimbot.Backtrack",
     "Trigger.Enabled",
     "ESP.Enabled","ESP.Chams",
-    "Move.Speed","Move.Fly","Move.NoClip","Move.InfJump","Move.Bhop","Move.Hitbox",
-    "AA.Jitter","AA.Desync","AA.HideHead","AA.FakeLag","AA.BufferTeleport",
-    "AA.ResolverBypass","AA.Predictor",
-    "Rage.Spinbot",
+    "Move.Speed","Move.Fly","Move.NoClip","Move.InfJump","Move.Bhop",
+    "AA.Jitter","AA.Desync","AA.HideHead","AA.FakeLag",
+    "Rage.MassFling","Rage.VoidTP","Rage.RemoteSpam","Rage.LagMachine","Rage.Unanchor",
 }) do
     P(path, false, true)
 end
--- refresh UI
+-- refresh UI после safe inject
 for path, list in pairs(UIREFS) do
     for _, fn in ipairs(list) do pcall(fn, G(path)) end
 end
 
+----------------------------------------------------------------
+-- UNLOAD (full cleanup, no garbage left)
+----------------------------------------------------------------
 function Unload()
+    -- 1. destroy all scopes (connections, instances, render binds)
     for _, s in ipairs(scopes) do s:Destroy() end
     table.clear(scopes)
-    -- restore movement
+    -- 2. restore movement state
     local rec = localRec()
     if rec and rec.hum and MV.origWalk then pcall(function() rec.hum.WalkSpeed = MV.origWalk end) end
     for part, can in pairs(MV.origCanCollide) do
         if part.Parent then pcall(function() part.CanCollide = can end) end
     end
-    for part, orig in pairs(MV.origHitbox) do
-        if part.Parent then pcall(function() part.Size=orig.Size; part.Transparency=orig.Transparency end) end
+    -- 3. destroy fly bodymovers
+    destroyFly()
+    -- 4. destroy rage parts
+    destroyLagMachine()
+    -- 5. release all ESP drawings
+    for _, r in pairs(Cache.byPlayer) do releaseViz(r) end
+    for _, list in pairs(Pool.free) do
+        for _, o in ipairs(list) do pcall(function() o:Remove() end) end
     end
-    clearAdvNoClip()
+    Pool.count = 0
+    -- 6. remove watermark + keybind display
+    if wmText then pcall(function() wmText:Remove() end) end
+    if kdText then pcall(function() kdText:Remove() end) end
+    if fovCircle then pcall(function() fovCircle:Remove() end) end
+    if tgtCircle then pcall(function() tgtCircle:Remove() end) end
+    -- 7. clear caches
+    table.clear(velEMA); table.clear(velTS); table.clear(btHistory)
+    table.clear(MV.origCanCollide); table.clear(RAGE.lagParts)
+    table.clear(RAGE.flingTargets); table.clear(RAGE.remoteTargets)
+    -- 8. clear env handle
     ENV.__ABYSS = nil
+    print("[unknown v8] UNLOADED — all cleanup done")
 end
 ENV.__ABYSS = { Unload = Unload }
-print("[unknown v7] ready — safe inject: all features OFF")
+print("[unknown v8] ready — safe inject: all features OFF, panic key = End")
