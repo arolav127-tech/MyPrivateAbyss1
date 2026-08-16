@@ -1,4 +1,3 @@
--- abyss // unknown v13 (non-blocking boot)
 local RS=game:GetService("RunService")
 local Players=game:GetService("Players")
 local UIS=game:GetService("UserInputService")
