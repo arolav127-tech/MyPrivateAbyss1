@@ -13,25 +13,34 @@ end
 -- Theme
 ----------------------------------------------------------------
 local Theme = {
-    TextColor               = Color3.fromRGB(240, 240, 240),
-    Background              = Color3.fromRGB(25, 25, 25),
-    Topbar                  = Color3.fromRGB(34, 34, 34),
-    TabBackground           = Color3.fromRGB(35, 35, 35),
-    TabBackgroundSelected   = Color3.fromRGB(210, 210, 210),
-    TabTextColor            = Color3.fromRGB(240, 240, 240),
-    SelectedTabTextColor    = Color3.fromRGB(50, 50, 50),
-    ElementBackground       = Color3.fromRGB(35, 35, 35),
-    ElementBackgroundHover  = Color3.fromRGB(40, 40, 40),
-    ElementStroke           = Color3.fromRGB(50, 50, 50),
-    SliderBackground        = Color3.fromRGB(70, 70, 70),
-    SliderProgress          = Color3.fromRGB(210, 210, 210),
-    ToggleDisabled          = Color3.fromRGB(90, 90, 90),
-    ToggleEnabled           = Color3.fromRGB(0, 146, 214),
-    NotificationBackground  = Color3.fromRGB(25, 25, 25),
-    SectionTextColor        = Color3.fromRGB(180, 180, 180),
-    Accent                  = Color3.fromRGB(0, 146, 214),
+    TextColor               = Color3.fromRGB(245, 248, 255),
+    MutedTextColor          = Color3.fromRGB(165, 174, 190),
+    Background              = Color3.fromRGB(18, 22, 30),
+    Topbar                  = Color3.fromRGB(34, 41, 54),
+    Sidebar                 = Color3.fromRGB(25, 31, 42),
+    TabBackground           = Color3.fromRGB(34, 42, 56),
+    TabBackgroundSelected   = Color3.fromRGB(230, 238, 255),
+    TabTextColor            = Color3.fromRGB(190, 200, 216),
+    SelectedTabTextColor    = Color3.fromRGB(28, 36, 50),
+    ElementBackground       = Color3.fromRGB(34, 41, 54),
+    ElementBackgroundHover  = Color3.fromRGB(46, 56, 72),
+    ElementStroke           = Color3.fromRGB(105, 120, 145),
+    SliderBackground        = Color3.fromRGB(72, 84, 104),
+    SliderProgress          = Color3.fromRGB(130, 190, 255),
+    ToggleDisabled          = Color3.fromRGB(92, 103, 122),
+    ToggleEnabled           = Color3.fromRGB(105, 181, 255),
+    NotificationBackground  = Color3.fromRGB(28, 35, 47),
+    SectionTextColor        = Color3.fromRGB(153, 165, 184),
+    Accent                  = Color3.fromRGB(112, 187, 255),
+    Accent2                 = Color3.fromRGB(190, 125, 255),
+    GlassTransparency       = 0.18,
+    SidebarTransparency     = 0.28,
+    ElementTransparency     = 0.20,
+    HoverTransparency       = 0.08,
+    StrokeTransparency      = 0.45,
+    StrongStrokeTransparency= 0.18,
+    ShadowTransparency      = 0.55,
 }
-
 local Library = { Flags = {}, Interface = nil, Version = "2.1" }
 
 function Library:Show()
@@ -92,10 +101,53 @@ local function stroke(parent, color, thickness)
 end
 
 local function tween(obj, duration, props)
-    local info = TweenInfo.new(duration or 0.2, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+    local info = TweenInfo.new(duration or 0.28, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
     local tw = TweenService:Create(obj, info, props)
     tw:Play()
     return tw
+end
+
+local function gradient(parent, rotation, c0, c1, transparency0, transparency1)
+    local g = new("UIGradient", {
+        Rotation = rotation or 90,
+        Color = ColorSequence.new(c0 or Theme.Topbar, c1 or Theme.Background),
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, transparency0 == nil and 0.02 or transparency0),
+            NumberSequenceKeypoint.new(1, transparency1 == nil and 0.18 or transparency1),
+        }),
+    }, parent)
+    return g
+end
+
+local function glassify(frame, opts)
+    opts = opts or {}
+    frame.BackgroundColor3 = opts.Color or Theme.Background
+    frame.BackgroundTransparency = opts.Transparency == nil and Theme.GlassTransparency or opts.Transparency
+
+    local s = stroke(frame, opts.StrokeColor or Theme.TextColor, opts.Thickness or 1)
+    s.Transparency = opts.StrokeTransparency == nil and Theme.StrokeTransparency or opts.StrokeTransparency
+
+    gradient(
+        frame,
+        opts.Rotation or 90,
+        opts.GradientA or Theme.Topbar,
+        opts.GradientB or Theme.Background,
+        opts.GradientTransparencyA == nil and 0.02 or opts.GradientTransparencyA,
+        opts.GradientTransparencyB == nil and 0.30 or opts.GradientTransparencyB
+    )
+
+    local shine = new("Frame", {
+        Name = "TopHighlight",
+        Size = UDim2.new(1, -18, 0, 1),
+        Position = UDim2.new(0, 9, 0, 1),
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BackgroundTransparency = 0.72,
+        BorderSizePixel = 0,
+        ZIndex = (frame.ZIndex or 1) + 1,
+        Parent = frame,
+    })
+    corner(shine, 1)
+    return s
 end
 
 local function guiParent()
@@ -201,14 +253,16 @@ function Library:Notify(data)
 
         local box = new("Frame", {
             BackgroundColor3 = Theme.NotificationBackground,
+            BackgroundTransparency = 0.22,
             BorderSizePixel = 0,
             Size = UDim2.new(1, 0, 0, 0),
             AutomaticSize = Enum.AutomaticSize.Y,
             BackgroundTransparency = 1,
             Parent = notifyHolder,
         })
-        corner(box, 8)
-        local line = stroke(box, Theme.ElementStroke)
+        corner(box, 14)
+        gradient(box, 90, Color3.fromRGB(60, 72, 94), Color3.fromRGB(27, 33, 44), 0.02, 0.28)
+        local line = stroke(box, Color3.fromRGB(235, 242, 255), 1)
         line.Transparency = 1
 
         new("UIPadding", {
@@ -271,63 +325,101 @@ function Library:CreateWindow(settings)
         configSettings.FileName = settings.ConfigurationSaving.FileName or configSettings.FileName
     end
 
+    if settings.Glass ~= false then
+        Theme.GlassTransparency = settings.GlassTransparency or Theme.GlassTransparency
+    end
+
+    local shadow = new("Frame", {
+        Name = "Shadow",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0.5, 8),
+        Size = UDim2.new(0, 512, 0, 487),
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = Theme.ShadowTransparency,
+        BorderSizePixel = 0,
+        Parent = screenGui,
+    })
+    corner(shadow, 18)
+
     local main = new("Frame", {
         Name = "Main",
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(0.5, 0, 0.5, 0),
         Size = UDim2.new(0, 500, 0, 475),
         BackgroundColor3 = Theme.Background,
+        BackgroundTransparency = Theme.GlassTransparency,
         BorderSizePixel = 0,
         ClipsDescendants = true,
+        ZIndex = 20,
         Parent = screenGui,
     })
-    corner(main, 8)
-    stroke(main, Theme.ElementStroke)
+    corner(main, 18)
+    glassify(main, {
+        Transparency = Theme.GlassTransparency,
+        StrokeColor = Color3.fromRGB(235, 242, 255),
+        StrokeTransparency = 0.58,
+        GradientA = Color3.fromRGB(45, 56, 74),
+        GradientB = Color3.fromRGB(16, 20, 28),
+        GradientTransparencyA = 0.04,
+        GradientTransparencyB = 0.35,
+    })
+
+    local scale = new("UIScale", { Scale = 0.96 }, main)
+    task.defer(function()
+        tween(scale, 0.5, { Scale = 1 })
+        tween(shadow, 0.5, { Position = UDim2.new(0.5, 0, 0.5, 6), BackgroundTransparency = 0.62 })
+    end)
 
     local topbar = new("Frame", {
-        Size = UDim2.new(1, 0, 0, 45),
+        Size = UDim2.new(1, 0, 0, 58),
         BackgroundColor3 = Theme.Topbar,
+        BackgroundTransparency = 0.30,
         BorderSizePixel = 0,
+        ZIndex = 25,
         Parent = main,
     })
-    corner(topbar, 8)
+    corner(topbar, 18)
+    gradient(topbar, 0, Color3.fromRGB(48, 58, 78), Color3.fromRGB(28, 34, 46), 0.00, 0.20)
     new("Frame", {
-        Size = UDim2.new(1, 0, 0, 10),
-        Position = UDim2.new(0, 0, 1, -10),
+        Size = UDim2.new(1, 0, 0, 12),
+        Position = UDim2.new(0, 0, 1, -12),
         BackgroundColor3 = Theme.Topbar,
+        BackgroundTransparency = 0.30,
         BorderSizePixel = 0,
         Parent = topbar,
     })
 
     new("TextLabel", {
         Size = UDim2.new(1, -160, 0, 20),
-        Position = UDim2.new(0, 14, 0, 6),
+        Position = UDim2.new(0, 18, 0, 7),
         BackgroundTransparency = 1,
         Text = settings.Name or "Abyss UI",
         Font = Enum.Font.GothamSemibold,
-        TextSize = 15,
+        TextSize = 16,
         TextColor3 = Theme.TextColor,
         TextXAlignment = Enum.TextXAlignment.Left,
         Parent = topbar,
     })
     new("TextLabel", {
         Size = UDim2.new(1, -160, 0, 14),
-        Position = UDim2.new(0, 14, 0, 25),
+        Position = UDim2.new(0, 18, 0, 30),
         BackgroundTransparency = 1,
         Text = settings.LoadingSubtitle or "",
         Font = Enum.Font.Gotham,
         TextSize = 11,
-        TextColor3 = Theme.SectionTextColor,
+        TextColor3 = Theme.MutedTextColor,
         TextXAlignment = Enum.TextXAlignment.Left,
         Parent = topbar,
     })
 
     local function topbarButton(text, offset)
         local btn = new("TextButton", {
-            Size = UDim2.new(0, 26, 0, 26),
-            Position = UDim2.new(1, offset, 0.5, -13),
+            Size = UDim2.new(0, 30, 0, 30),
+            Position = UDim2.new(1, offset, 0.5, -15),
             BackgroundColor3 = Theme.ElementBackground,
+            BackgroundTransparency = 0.24,
             BorderSizePixel = 0,
+            ZIndex = 30,
             Text = text,
             TextColor3 = Theme.TextColor,
             Font = Enum.Font.GothamBold,
@@ -335,24 +427,40 @@ function Library:CreateWindow(settings)
             AutoButtonColor = false,
             Parent = topbar,
         })
-        corner(btn, 6)
+        corner(btn, 9)
+        stroke(btn, Color3.fromRGB(235, 242, 255), 1).Transparency = 0.78
         return btn
     end
-    local hideBtn = topbarButton("x", -34)
-    local minBtn  = topbarButton("-", -66)
+    local hideBtn = topbarButton("×", -38)
+    local minBtn  = topbarButton("–", -74)
+
+    local sidebar = new("Frame", {
+        Size = UDim2.new(0, 132, 1, -72),
+        Position = UDim2.new(0, 10, 0, 64),
+        BackgroundColor3 = Theme.Sidebar,
+        BackgroundTransparency = Theme.SidebarTransparency,
+        BorderSizePixel = 0,
+        ZIndex = 21,
+        Parent = main,
+    })
+    corner(sidebar, 14)
+    gradient(sidebar, 90, Color3.fromRGB(46, 55, 72), Color3.fromRGB(25, 31, 42), 0.02, 0.28)
+    stroke(sidebar, Color3.fromRGB(220, 230, 245), 1).Transparency = 0.82
 
     local tabList = new("Frame", {
-        Size = UDim2.new(0, 132, 1, -57),
-        Position = UDim2.new(0, 6, 0, 51),
+        Size = UDim2.new(1, -12, 1, -12),
+        Position = UDim2.fromOffset(6, 6),
         BackgroundTransparency = 1,
-        Parent = main,
+        ZIndex = 22,
+        Parent = sidebar,
     })
     new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, tabList)
 
     local pages = new("Frame", {
-        Size = UDim2.new(1, -146, 1, -57),
-        Position = UDim2.new(0, 140, 0, 51),
+        Size = UDim2.new(1, -164, 1, -72),
+        Position = UDim2.new(0, 154, 0, 64),
         BackgroundTransparency = 1,
+        ZIndex = 21,
         Parent = main,
     })
 
@@ -366,7 +474,7 @@ function Library:CreateWindow(settings)
             rec.page.Visible = isSel
             tween(rec.btn, 0.2, {
                 BackgroundColor3 = isSel and Theme.TabBackgroundSelected or Theme.TabBackground,
-                BackgroundTransparency = isSel and 0 or 0.4,
+                BackgroundTransparency = isSel and 0.02 or 0.34,
             })
             tween(rec.btn, 0.2, { TextColor3 = isSel and Theme.SelectedTabTextColor or Theme.TabTextColor })
         end
@@ -395,20 +503,21 @@ function Library:CreateWindow(settings)
         end)
 
         local btn = new("TextButton", {
-            Size = UDim2.new(1, 0, 0, 30),
+            Size = UDim2.new(1, 0, 0, 34),
             BackgroundColor3 = Theme.TabBackground,
-            BackgroundTransparency = 0.4,
+            BackgroundTransparency = 0.34,
             BorderSizePixel = 0,
-            Text = "  " .. name,
+            Text = "   " .. tostring(name),
             TextXAlignment = Enum.TextXAlignment.Left,
             TextColor3 = Theme.TabTextColor,
-            Font = Enum.Font.Gotham,
+            Font = Enum.Font.GothamMedium,
             TextSize = 13,
             AutoButtonColor = false,
+            ZIndex = 23,
             Parent = tabList,
         })
-        corner(btn, 6)
-        stroke(btn, Theme.ElementStroke)
+        corner(btn, 10)
+        stroke(btn, Color3.fromRGB(220, 230, 245), 1).Transparency = 0.88
 
         local record = { name = name, page = page, btn = btn }
         table.insert(Window.Tabs, record)
@@ -434,12 +543,22 @@ function Library:CreateWindow(settings)
             local frame = new("Frame", {
                 Size = UDim2.new(1, 0, 0, height),
                 BackgroundColor3 = Theme.ElementBackground,
+                BackgroundTransparency = Theme.ElementTransparency,
                 BorderSizePixel = 0,
                 LayoutOrder = nextOrder(),
+                ZIndex = 24,
                 Parent = page,
             })
-            corner(frame, 6)
-            stroke(frame, Theme.ElementStroke)
+            corner(frame, 10)
+            glassify(frame, {
+                Transparency = Theme.ElementTransparency,
+                StrokeColor = Color3.fromRGB(230, 238, 250),
+                StrokeTransparency = 0.86,
+                GradientA = Color3.fromRGB(55, 65, 84),
+                GradientB = Color3.fromRGB(31, 38, 50),
+                GradientTransparencyA = 0.06,
+                GradientTransparencyB = 0.36,
+            })
             return frame
         end
 
@@ -521,6 +640,7 @@ function Library:CreateWindow(settings)
             opts = opts or {}
             local frame = new("Frame", {
                 BackgroundColor3 = Theme.ElementBackground,
+                BackgroundTransparency = Theme.ElementTransparency,
                 BorderSizePixel = 0,
                 LayoutOrder = nextOrder(),
                 AutomaticSize = Enum.AutomaticSize.Y,
@@ -776,6 +896,7 @@ function Library:CreateWindow(settings)
             local list = new("Frame", {
                 Size = UDim2.new(1, 0, 0, 0),
                 BackgroundColor3 = Theme.ElementBackground,
+                BackgroundTransparency = Theme.ElementTransparency,
                 BorderSizePixel = 0,
                 ClipsDescendants = true,
                 Visible = false,
@@ -994,16 +1115,19 @@ function Library:CreateWindow(settings)
         if minimized then
             tabList.Visible = false
             pages.Visible = false
-            tween(main, 0.25, { Size = UDim2.new(0, 500, 0, 45) })
+            tween(main, 0.30, { Size = UDim2.new(0, 500, 0, 58) })
+            tween(shadow, 0.30, { Size = UDim2.new(0, 512, 0, 70) })
         else
             tabList.Visible = true
             pages.Visible = true
-            tween(main, 0.25, { Size = UDim2.new(0, 500, 0, 475) })
+            tween(main, 0.30, { Size = UDim2.new(0, 500, 0, 475) })
+            tween(shadow, 0.30, { Size = UDim2.new(0, 512, 0, 487) })
         end
     end)
 
     connect(hideBtn.MouseButton1Click, function()
         main.Visible = false
+        shadow.Visible = false
     end)
 
     local toggleKey = settings.ToggleUIKeybind or Enum.KeyCode.RightShift
@@ -1014,6 +1138,7 @@ function Library:CreateWindow(settings)
         if processed then return end
         if input.KeyCode == toggleKey then
             main.Visible = not main.Visible
+            shadow.Visible = main.Visible
         end
     end)
 
@@ -1023,6 +1148,7 @@ function Library:CreateWindow(settings)
         disconnectAll()
         Library.Flags = {}
         if main and main.Parent then main:Destroy() end
+        if shadow and shadow.Parent then shadow:Destroy() end
         if screenGui and #screenGui:GetChildren() == 0 then
             pcall(function() screenGui:Destroy() end)
         end
@@ -1030,11 +1156,17 @@ function Library:CreateWindow(settings)
     end
 
     function Window:Show()
-        if not Window._destroyed then main.Visible = true end
+        if not Window._destroyed then
+            main.Visible = true
+            shadow.Visible = true
+        end
     end
 
     function Window:Hide()
-        if not Window._destroyed then main.Visible = false end
+        if not Window._destroyed then
+            main.Visible = false
+            shadow.Visible = false
+        end
     end
 
     function Window:Minimize()
@@ -1043,6 +1175,12 @@ function Library:CreateWindow(settings)
 
     function Window:Restore()
         if minimized then minBtn:Activate() end
+    end
+
+    function Window:SetGlassTransparency(value)
+        value = math.clamp(tonumber(value) or Theme.GlassTransparency, 0, 1)
+        Theme.GlassTransparency = value
+        main.BackgroundTransparency = value
     end
 
     if configSettings.Enabled then
