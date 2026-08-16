@@ -258,7 +258,7 @@ local function setCursor(on)
     if on then
         if curIcon == nil then curIcon = UserInputService.MouseIconEnabled end
         if curBehavior == nil then curBehavior = UserInputService.MouseBehavior end
-        UserInputService.MouseIconEnabled = true
+        UserInputService.MouseIconEnabled = false
         UserInputService.MouseBehavior = Enum.MouseBehavior.Default
     else
         if curIcon ~= nil then UserInputService.MouseIconEnabled = curIcon end
