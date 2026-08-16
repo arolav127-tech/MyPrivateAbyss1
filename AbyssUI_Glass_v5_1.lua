@@ -3,22 +3,35 @@ local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService       = game:GetService("RunService")
 local CoreGui          = game:GetService("CoreGui")
+local Lighting         = game:GetService("Lighting")
+local VirtualUser      = game:GetService("VirtualUser")
 
 if not RunService:IsClient() then error("client only") end
 
 local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+while not LocalPlayer.Character do task.wait(0.1) end
 
 ----------------------------------------------------------------
 -- Settings
 ----------------------------------------------------------------
 local Settings = {
-    Aimbot  = { Enabled = false, FOV = 90, Smoothing = 6, WallCheck = true, OnlyEnemies = true, Prediction = 0.11 },
-    ESP     = { Enabled = false, Boxes = true, HealthBar = true, Snaplines = false, Names = true, Distance = false, Chams = false, MaxDistance = 900, OnlyEnemies = true },
-    Speed   = { Enabled = false, Value = 50 },
-    Fly     = { Enabled = false, Value = 60 },
-    NoClip  = false,
+    Aimbot = {
+        Enabled = false, FOV = 90, Smoothing = 6, Prediction = 0.11,
+        WallCheck = true, OnlyEnemies = true, RequireMouseDown = false,
+        HitChance = 100, MaxFovDelta = 30, Hysteresis = true,
+    },
+    ESP = {
+        Enabled = false, Boxes = true, HealthBar = true, Snaplines = false,
+        Names = true, Distance = false, Chams = false,
+        MaxDistance = 900, OnlyEnemies = true,
+    },
+    Speed = { Enabled = false, Value = 50, Mode = "WalkSpeed" },
+    Fly   = { Enabled = false, Value = 60, Mode = "LinearVelocity", AntiKick = true },
+    NoClip = false,
     InfJump = false,
-    Hitbox  = { Enabled = false, Size = 12 },
+    Hitbox = { Enabled = false, Size = 12 },
+    Combat = { KillAura = false, AuraRange = 14, AutoClicker = false, CPS = 12 },
+    Farm   = { CollectAura = false, AuraRadius = 30, AntiAFK = true, Fullbright = false },
 }
 
 ----------------------------------------------------------------
@@ -88,6 +101,11 @@ local function getBestPart(char)
     return nil
 end
 
+local function getRoot()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 rayParams.IgnoreWater = true
@@ -104,6 +122,25 @@ local function isVisible(pos, targetChar)
     if not hit then return true end
     if targetChar and hit.Instance:IsDescendantOf(targetChar) then return true end
     return false
+end
+
+-- Velocity EMA (сглаженная скорость для prediction)
+local velEMA = setmetatable({}, { __mode = "k" })
+local velTS  = setmetatable({}, { __mode = "k" })
+local function smoothedVel(part)
+    local now = os.clock()
+    local cur = part.AssemblyLinearVelocity
+    if cur.Magnitude > 500 then cur = cur.Unit * 500 end
+    local prev, pt = velEMA[part], velTS[part]
+    local sm
+    if prev and pt and (now - pt) < 2 then
+        local a = 1 - math.exp(-(now - pt) / 0.1)
+        sm = prev:Lerp(cur, a)
+    else
+        sm = cur
+    end
+    velEMA[part], velTS[part] = sm, now
+    return sm
 end
 
 ----------------------------------------------------------------
@@ -125,7 +162,7 @@ local main = new("Frame", {
     Name = "Main",
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.new(0.5, 0, 0.5, 0),
-    Size = UDim2.fromOffset(520, 430),
+    Size = UDim2.fromOffset(540, 460),
     BackgroundColor3 = Color3.fromRGB(18, 22, 30),
     BorderSizePixel = 0,
     ClipsDescendants = true,
@@ -153,7 +190,7 @@ new("TextLabel", {
     Size = UDim2.new(1, -150, 0, 18),
     Position = UDim2.fromOffset(14, 6),
     BackgroundTransparency = 1,
-    Text = "Abyss Universal",
+    Text = "Abyss Universal v3",
     Font = Enum.Font.GothamSemibold,
     TextSize = 15,
     TextColor3 = Color3.fromRGB(245, 248, 255),
@@ -164,7 +201,7 @@ new("TextLabel", {
     Size = UDim2.new(1, -150, 0, 13),
     Position = UDim2.fromOffset(14, 25),
     BackgroundTransparency = 1,
-    Text = "single-file build",
+    Text = "speed bypass + antikick + aura",
     Font = Enum.Font.Gotham,
     TextSize = 11,
     TextColor3 = Color3.fromRGB(160, 172, 190),
@@ -497,6 +534,106 @@ local function createTab(name)
         return obj
     end
 
+    function Tab:CreateDropdown(opts)
+        opts = opts or {}
+        local options = opts.Options or {}
+        local current = opts.CurrentOption or options[1]
+
+        local f = elemFrame(32)
+        hoverize(f)
+        elemTitle(f, opts.Name or "Dropdown")
+
+        local sel = new("TextLabel", {
+            Size = UDim2.new(0.34, -26, 1, 0),
+            Position = UDim2.new(0.66, -16, 0, 0),
+            BackgroundTransparency = 1,
+            Text = tostring(current or "None"),
+            TextColor3 = Color3.fromRGB(170, 180, 198),
+            Font = Enum.Font.Gotham,
+            TextSize = 12,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            Parent = f,
+        })
+
+        local arrow = new("TextLabel", {
+            Size = UDim2.fromOffset(16, 32),
+            Position = UDim2.new(1, -22, 0, 0),
+            BackgroundTransparency = 1,
+            Text = "v",
+            TextColor3 = Color3.fromRGB(170, 180, 198),
+            Font = Enum.Font.GothamBold,
+            TextSize = 12,
+            Parent = f,
+        })
+
+        local list = new("Frame", {
+            Size = UDim2.new(1, 0, 0, 0),
+            Position = UDim2.new(0, 0, 1, 4),
+            BackgroundColor3 = Color3.fromRGB(28, 36, 50),
+            BorderSizePixel = 0,
+            ClipsDescendants = true,
+            Visible = false,
+            ZIndex = 30,
+            Parent = f,
+        })
+        corner(list, 7)
+        stroke(list, Color3.fromRGB(58, 70, 90))
+        local lLayout = new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+        new("UIPadding", {
+            PaddingTop = UDim.new(0, 5), PaddingBottom = UDim.new(0, 5),
+            PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5),
+        }, list)
+
+        local obj = { CurrentOption = current }
+        local open = false
+
+        for _, opt in ipairs(options) do
+            local b = new("TextButton", {
+                Size = UDim2.new(1, 0, 0, 24),
+                BackgroundColor3 = Color3.fromRGB(40, 50, 68),
+                BorderSizePixel = 0,
+                Text = "  " .. tostring(opt),
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextColor3 = Color3.fromRGB(205, 214, 228),
+                Font = Enum.Font.Gotham,
+                TextSize = 12,
+                AutoButtonColor = false,
+                ZIndex = 32,
+                Parent = list,
+            })
+            corner(b, 5)
+            b.MouseButton1Click:Connect(function()
+                current = opt
+                obj.CurrentOption = opt
+                sel.Text = tostring(opt)
+                if type(opts.Callback) == "function" then pcall(opts.Callback, opt) end
+                open = false
+                arrow.Text = "v"
+                tween(list, 0.15, { Size = UDim2.new(1, 0, 0, 0) })
+                task.delay(0.16, function() if not open then list.Visible = false end end)
+            end)
+        end
+
+        addClick(f, function()
+            open = not open
+            arrow.Text = open and "^" or "v"
+            list.Visible = true
+            local h = math.clamp(lLayout.AbsoluteContentSize.Y + 10, 26, 150)
+            tween(list, 0.15, { Size = UDim2.new(1, 0, 0, open and h or 0) })
+            if not open then
+                task.delay(0.16, function() if not open then list.Visible = false end end)
+            end
+        end)
+
+        function obj:Set(v)
+            current = v
+            obj.CurrentOption = v
+            sel.Text = tostring(v)
+            if type(opts.Callback) == "function" then pcall(opts.Callback, v) end
+        end
+        return obj
+    end
+
     return Tab
 end
 
@@ -535,7 +672,7 @@ minBtn.MouseButton1Click:Connect(function()
     else
         sidebar.Visible = true
         pages.Visible = true
-        tween(main, 0.2, { Size = UDim2.fromOffset(main.Size.X.Offset, 430) })
+        tween(main, 0.2, { Size = UDim2.fromOffset(main.Size.X.Offset, 460) })
     end
 end)
 closeBtn.MouseButton1Click:Connect(function()
@@ -602,7 +739,6 @@ local function updateESP()
             hideEntry(e)
             continue
         end
-
         if Settings.ESP.OnlyEnemies and not isEnemy(plr) then
             hideEntry(e)
             continue
@@ -728,7 +864,7 @@ pcall(function()
 end)
 
 ----------------------------------------------------------------
--- Aimbot module
+-- Aimbot module (v2: EMA prediction + hysteresis + angular clamp)
 ----------------------------------------------------------------
 local fovCircle = nil
 if drawingAvailable then
@@ -743,41 +879,62 @@ if drawingAvailable then
     end
 end
 
+local prevTargetPlayer = nil
+
 local function getTarget()
-    if not Camera then return nil end
+    if not Camera or not LocalPlayer.Character then return nil end
+    if Settings.Aimbot.RequireMouseDown then
+        if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then return nil end
+    end
+
     local vp = Camera.ViewportSize
     local center = Vector2.new(vp.X * 0.5, vp.Y * 0.5)
-    local best, bestD = nil, Settings.Aimbot.FOV
+    local fov = Settings.Aimbot.FOV
+    local best, bestD = nil, fov
+    local prevEntry = nil
 
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            if not (Settings.Aimbot.OnlyEnemies and not isEnemy(plr)) then
-                local char = plr.Character
-                if isAlive(char) then
-                    local part = getBestPart(char)
-                    if part then
-                        local pos = part.Position
-                        if Settings.Aimbot.Prediction > 0 then
-                            local vel = part.AssemblyLinearVelocity
-                            if vel.Magnitude < 500 then
-                                pos = pos + vel * Settings.Aimbot.Prediction
-                            end
-                        end
-                        local sp, onScreen = Camera:WorldToViewportPoint(pos)
-                        if onScreen and sp.Z > 0 then
-                            local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-                            if d <= bestD then
-                                if not Settings.Aimbot.WallCheck or isVisible(pos, char) then
-                                    bestD = d
-                                    best = { part = part, char = char, pos = pos }
-                                end
-                            end
-                        end
-                    end
-                end
+        if plr == LocalPlayer then continue end
+        if Settings.Aimbot.OnlyEnemies and not isEnemy(plr) then continue end
+
+        local char = plr.Character
+        if not isAlive(char) then continue end
+        local part = getBestPart(char)
+        if not part then continue end
+
+        local pos = part.Position
+        if Settings.Aimbot.Prediction > 0 then
+            local vel = smoothedVel(part)
+            local lead = vel * Settings.Aimbot.Prediction
+            if lead.Magnitude > 35 then lead = lead.Unit * 35 end
+            pos = pos + lead
+        end
+
+        local sp, onScreen = Camera:WorldToViewportPoint(pos)
+        if not onScreen or sp.Z < 0 then continue end
+
+        local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+        if d <= fov then
+            if Settings.Aimbot.WallCheck and not isVisible(pos, char) then
+                continue
+            end
+            local entry = { player = plr, char = char, part = part, pos = pos, dist = d }
+            if plr == prevTargetPlayer then prevEntry = entry end
+            if d < bestD then
+                bestD = d
+                best = entry
             end
         end
     end
+
+    -- Hysteresis: не фликаем между целями
+    if Settings.Aimbot.Hysteresis and prevEntry and best and prevEntry.player ~= best.player then
+        if best.dist > prevEntry.dist * 0.85 then
+            best = prevEntry
+        end
+    end
+
+    prevTargetPlayer = best and best.player or nil
     return best
 end
 
@@ -794,13 +951,38 @@ local function updateAim(dt)
         end
     end
     if not Settings.Aimbot.Enabled or not Camera then return end
+
     local t = getTarget()
-    if t then
-        local desired = CFrame.lookAt(Camera.CFrame.Position, t.pos)
-        local sm = math.max(Settings.Aimbot.Smoothing, 0.5)
-        local alpha = math.clamp((1 - math.exp(-(dt or 1/60) * (60 / sm))), 0, 1)
-        Camera.CFrame = Camera.CFrame:Lerp(desired, alpha)
+    if not t then return end
+
+    local cam = Camera.CFrame
+    local desired = CFrame.lookAt(cam.Position, t.pos)
+    local sm = math.max(Settings.Aimbot.Smoothing, 0.5)
+    local alpha = 1 - math.exp(-(dt or 1/60) * (60 / sm))
+
+    -- Per-frame angular clamp (нет визуального snap)
+    local maxDeg = Settings.Aimbot.MaxFovDelta
+    if maxDeg > 0 then
+        local dot = math.clamp(cam.LookVector:Dot(desired.LookVector), -1, 1)
+        local ang = math.acos(dot)
+        local maxRad = math.rad(maxDeg)
+        if ang > 0 and ang * alpha > maxRad then
+            alpha = maxRad / ang
+        end
     end
+
+    -- HitChance: промах с рандомным offset
+    if Settings.HitChance < 100 then
+        if math.random(1, 100) > Settings.HitChance then
+            local rnd = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5)
+            if rnd.Magnitude > 0.001 then
+                desired = CFrame.lookAt(cam.Position, t.pos + rnd.Unit * 4)
+            end
+        end
+    end
+
+    alpha = math.clamp(alpha, 0, 1)
+    Camera.CFrame = cam:Lerp(desired, alpha)
 end
 
 pcall(function()
@@ -808,7 +990,35 @@ pcall(function()
 end)
 
 ----------------------------------------------------------------
--- Movement module
+-- AntiKick (блокирует client-side Kick)
+----------------------------------------------------------------
+local kickHooked = false
+local function installKickHook()
+    if kickHooked then return end
+    if type(getrawmetatable) ~= "function" or type(setreadonly) ~= "function"
+        or type(newcclosure) ~= "function" or type(getnamecallmethod) ~= "function" then
+        return
+    end
+    local ok, mt = pcall(getrawmetatable, game)
+    if not ok or not mt then return end
+    local orig = mt.__namecall
+    pcall(setreadonly, mt, false)
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if (method == "Kick" or method == "kick") and self == LocalPlayer then
+            if type(checkcaller) == "function" and checkcaller() then
+                return orig(self, ...)
+            end
+            return nil
+        end
+        return orig(self, ...)
+    end)
+    pcall(setreadonly, mt, true)
+    kickHooked = true
+end
+
+----------------------------------------------------------------
+-- Movement module (speed modes + fly modes)
 ----------------------------------------------------------------
 local fly = { att = nil, lv = nil, ao = nil, on = false }
 
@@ -840,38 +1050,22 @@ local function flyCreate(root)
     fly.on = true
 end
 
-local hitboxOriginal = setmetatable({}, { __mode = "k" })
-local hitboxTimer = 0
-
-local function applyHitbox(dt)
-    hitboxTimer = hitboxTimer + dt
-    if hitboxTimer < 0.25 then return end
-    hitboxTimer = 0
-    local enabled = Settings.Hitbox.Enabled
-    local size = Settings.Hitbox.Size
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and plr.Character then
-            for _, part in ipairs(plr.Character:GetChildren()) do
-                if part:IsA("BasePart") and (part.Name == "Head" or part.Name == "UpperTorso" or part.Name == "Torso" or part.Name == "HumanoidRootPart") then
-                    if enabled then
-                        if not hitboxOriginal[part] then
-                            hitboxOriginal[part] = part.Size
-                        end
-                        if part.Size.X ~= size then
-                            part.Size = Vector3.new(size, size, size)
-                        end
-                    elseif hitboxOriginal[part] then
-                        part.Size = hitboxOriginal[part]
-                        hitboxOriginal[part] = nil
-                    end
-                end
-            end
-        end
-    end
-end
-
 local originalWalk = nil
 local lastJump = 0
+
+local function getFlyMove()
+    local move = Vector3.zero
+    if Camera then
+        local look, right = Camera.CFrame.LookVector, Camera.CFrame.RightVector
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + look end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then move = move - look end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then move = move - right end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then move = move + right end
+    end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0, 1, 0) end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0, 1, 0) end
+    return move
+end
 
 local function onHeartbeat(dt)
     local char = LocalPlayer.Character
@@ -880,54 +1074,285 @@ local function onHeartbeat(dt)
     local root = char:FindFirstChild("HumanoidRootPart")
     if not hum or not root then return end
 
+    ---------------- Speed (4 mode bypass) ----------------
     if Settings.Speed.Enabled then
-        if originalWalk == nil then originalWalk = hum.WalkSpeed end
-        if hum.WalkSpeed ~= Settings.Speed.Value then hum.WalkSpeed = Settings.Speed.Value end
+        local v = Settings.Speed.Value
+        local mode = Settings.Speed.Mode
+        if mode == "WalkSpeed" then
+            if originalWalk == nil then originalWalk = hum.WalkSpeed end
+            if hum.WalkSpeed ~= v then hum.WalkSpeed = v end
+        elseif mode == "Loop" then
+            -- игра сбрасывает WalkSpeed каждый кадр -> мы тоже ставим каждый кадр
+            if originalWalk == nil then originalWalk = hum.WalkSpeed end
+            hum.WalkSpeed = v
+        elseif mode == "Velocity" then
+            local md = hum.MoveDirection
+            if md.Magnitude > 0.1 then
+                local cur = root.AssemblyLinearVelocity
+                root.AssemblyLinearVelocity = Vector3.new(md.X * v, cur.Y, md.Z * v)
+            end
+        elseif mode == "CFrame" then
+            -- не трогает WalkSpeed/Velocity -> обход speed-check
+            local md = hum.MoveDirection
+            if md.Magnitude > 0.1 then
+                root.CFrame = root.CFrame + md * v * dt
+            end
+        end
     elseif originalWalk then
         if hum.WalkSpeed ~= originalWalk then hum.WalkSpeed = originalWalk end
         originalWalk = nil
     end
 
+    ---------------- NoClip ----------------
     if Settings.NoClip then
         for _, part in ipairs(char:GetDescendants()) do
             if part:IsA("BasePart") and part.CanCollide then part.CanCollide = false end
         end
     end
 
+    ---------------- InfJump ----------------
     if Settings.InfJump and UserInputService:IsKeyDown(Enum.KeyCode.Space) and tick() - lastJump > 0.25 then
         hum:ChangeState(Enum.HumanoidStateType.Jumping)
         lastJump = tick()
     end
 
+    ---------------- Fly (2 mode + antikick) ----------------
     if Settings.Fly.Enabled then
-        if not fly.on or not (fly.lv and fly.lv.Parent == root) then flyCreate(root) end
-        if fly.on then
-            local move = Vector3.zero
-            if Camera then
-                local look, right = Camera.CFrame.LookVector, Camera.CFrame.RightVector
-                if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + look end
-                if UserInputService:IsKeyDown(Enum.KeyCode.S) then move = move - look end
-                if UserInputService:IsKeyDown(Enum.KeyCode.A) then move = move - right end
-                if UserInputService:IsKeyDown(Enum.KeyCode.D) then move = move + right end
-            end
-            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0, 1, 0) end
-            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0, 1, 0) end
-            fly.lv.VectorVelocity = (move.Magnitude > 0) and (move.Unit * Settings.Fly.Value) or Vector3.zero
-            if fly.ao and Camera then fly.ao.CFrame = Camera.CFrame end
-        end
-    elseif fly.on then
-        flyDestroy()
-    end
+        if Settings.Fly.AntiKick and not kickHooked then installKickHook() end
 
-    applyHitbox(dt)
+        local mode = Settings.Fly.Mode
+        local move = getFlyMove()
+        local speed = Settings.Fly.Value
+
+        if mode == "LinearVelocity" then
+            if not fly.on or not (fly.lv and fly.lv.Parent == root) then flyCreate(root) end
+            if fly.on then
+                local desired = (move.Magnitude > 0) and (move.Unit * speed) or Vector3.zero
+                fly.lv.VectorVelocity = desired
+                if fly.ao and Camera then fly.ao.CFrame = Camera.CFrame end
+            end
+        elseif mode == "CFrame" then
+            -- низкая velocity-сигнатура: двигаем позицией, гасим velocity
+            if fly.on then flyDestroy() end
+            if move.Magnitude > 0 then
+                root.CFrame = root.CFrame + move.Unit * speed * dt
+            end
+            root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        end
+    else
+        if fly.on then flyDestroy() end
+    end
 end
 RunService.Heartbeat:Connect(onHeartbeat)
 
 LocalPlayer.CharacterAdded:Connect(function()
     flyDestroy()
     originalWalk = nil
-    hitboxTimer = 0
+    table.clear(velEMA)
+    table.clear(velTS)
+    prevTargetPlayer = nil
 end)
+
+----------------------------------------------------------------
+-- Combat extras: Kill Aura + Auto Clicker
+----------------------------------------------------------------
+local clickAcc = 0
+local auraAcc = 0
+
+local function doClick()
+    local char = LocalPlayer.Character
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    if tool then pcall(function() tool:Activate() end) end
+    if type(mouse1click) == "function" then pcall(mouse1click) end
+end
+
+local function killAuraStep()
+    local char = LocalPlayer.Character
+    local root = getRoot()
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    if not root or not tool then return end
+
+    local best, bestD = nil, Settings.Combat.AuraRange
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
+        if not isEnemy(plr) then continue end
+        local oc = plr.Character
+        if not isAlive(oc) then continue end
+        local oroot = oc:FindFirstChild("HumanoidRootPart")
+        if not oroot then continue end
+        local d = (oroot.Position - root.Position).Magnitude
+        if d < bestD then
+            bestD = d
+            best = oroot
+        end
+    end
+
+    if best then
+        -- развернуться к цели
+        local look = (best.Position - root.Position)
+        look = Vector3.new(look.X, 0, look.Z)
+        if look.Magnitude > 0.1 then
+            pcall(function()
+                root.CFrame = CFrame.lookAt(root.Position, root.Position + look)
+            end)
+        end
+        pcall(function() tool:Activate() end)
+    end
+end
+
+local function combatLoop(dt)
+    if Settings.Combat.AutoClicker then
+        clickAcc = clickAcc + dt
+        local interval = 1 / math.max(Settings.Combat.CPS, 1)
+        while clickAcc >= interval do
+            clickAcc = clickAcc - interval
+            doClick()
+        end
+    else
+        clickAcc = 0
+    end
+
+    if Settings.Combat.KillAura then
+        auraAcc = auraAcc + dt
+        if auraAcc >= 0.1 then
+            auraAcc = 0
+            killAuraStep()
+        end
+    else
+        auraAcc = 0
+    end
+end
+RunService.Heartbeat:Connect(combatLoop)
+
+----------------------------------------------------------------
+-- Farm extras: Collect Aura + Anti-AFK + Fullbright
+----------------------------------------------------------------
+local COLLECT_NAMES = {
+    "coin", "cash", "drop", "pickup", "gem", "orb", "collect",
+    "money", "chest", "apple", "cookie", "present", "loot",
+}
+
+local function isCollectable(obj)
+    if not obj:IsA("BasePart") and not obj:IsA("Model") then return false end
+    local n = obj.Name:lower()
+    for _, pat in ipairs(COLLECT_NAMES) do
+        if n:find(pat, 1, true) then return true end
+    end
+    return false
+end
+
+local collectAcc = 0
+local function collectLoop(dt)
+    if not Settings.Farm.CollectAura then
+        collectAcc = 0
+        return
+    end
+    collectAcc = collectAcc + dt
+    if collectAcc < 0.5 then return end
+    collectAcc = 0
+
+    local root = getRoot()
+    if not root then return end
+    local r = Settings.Farm.AuraRadius
+
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if isCollectable(obj) then
+            local pos = nil
+            if obj:IsA("Model") then
+                if obj.PrimaryPart then pos = obj.PrimaryPart.Position end
+            else
+                pos = obj.Position
+            end
+            if pos and (pos - root.Position).Magnitude <= r then
+                pcall(function()
+                    local target = root.CFrame + Vector3.new(0, 2, 0)
+                    if obj:IsA("Model") then
+                        if obj.PrimaryPart then obj.PrimaryPart.CFrame = target end
+                    else
+                        obj.CFrame = target
+                    end
+                end)
+            end
+        end
+    end
+end
+RunService.Heartbeat:Connect(collectLoop)
+
+-- Anti-AFK (против idle-kick)
+LocalPlayer.Idled:Connect(function()
+    if Settings.Farm.AntiAFK then
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+    end
+end)
+
+-- Fullbright
+local lightOrig = nil
+local function applyFullbright(on)
+    if on then
+        if not lightOrig then
+            lightOrig = {
+                Brightness = Lighting.Brightness,
+                ClockTime = Lighting.ClockTime,
+                FogEnd = Lighting.FogEnd,
+                GlobalShadows = Lighting.GlobalShadows,
+                Ambient = Lighting.Ambient,
+                OutdoorAmbient = Lighting.OutdoorAmbient,
+            }
+        end
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.FogEnd = 100000
+        Lighting.GlobalShadows = false
+        Lighting.Ambient = Color3.fromRGB(178, 178, 178)
+        Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+    elseif lightOrig then
+        Lighting.Brightness = lightOrig.Brightness
+        Lighting.ClockTime = lightOrig.ClockTime
+        Lighting.FogEnd = lightOrig.FogEnd
+        Lighting.GlobalShadows = lightOrig.GlobalShadows
+        Lighting.Ambient = lightOrig.Ambient
+        Lighting.OutdoorAmbient = lightOrig.OutdoorAmbient
+        lightOrig = nil
+    end
+end
+
+----------------------------------------------------------------
+-- Hitbox expander
+----------------------------------------------------------------
+local hitboxOriginal = setmetatable({}, { __mode = "k" })
+local hitboxAcc = 0
+
+local function hitboxLoop(dt)
+    hitboxAcc = hitboxAcc + dt
+    if hitboxAcc < 0.25 then return end
+    hitboxAcc = 0
+
+    local enabled = Settings.Hitbox.Enabled
+    local size = Settings.Hitbox.Size
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer or not plr.Character then continue end
+        for _, part in ipairs(plr.Character:GetChildren()) do
+            if part:IsA("BasePart") and (part.Name == "Head" or part.Name == "UpperTorso" or part.Name == "Torso" or part.Name == "HumanoidRootPart") then
+                if enabled then
+                    if not hitboxOriginal[part] then
+                        hitboxOriginal[part] = part.Size
+                    end
+                    if part.Size.X ~= size then
+                        part.Size = Vector3.new(size, size, size)
+                    end
+                elseif hitboxOriginal[part] then
+                    part.Size = hitboxOriginal[part]
+                    hitboxOriginal[part] = nil
+                end
+            end
+        end
+    end
+end
+RunService.Heartbeat:Connect(hitboxLoop)
 
 ----------------------------------------------------------------
 -- Build GUI tabs
@@ -937,8 +1362,17 @@ TabCombat:CreateSection("Aimbot")
 TabCombat:CreateToggle({ Name = "Aimbot", CurrentValue = Settings.Aimbot.Enabled, Callback = function(v) Settings.Aimbot.Enabled = v end })
 TabCombat:CreateToggle({ Name = "Wall Check", CurrentValue = Settings.Aimbot.WallCheck, Callback = function(v) Settings.Aimbot.WallCheck = v end })
 TabCombat:CreateToggle({ Name = "Only Enemies", CurrentValue = Settings.Aimbot.OnlyEnemies, Callback = function(v) Settings.Aimbot.OnlyEnemies = v end })
+TabCombat:CreateToggle({ Name = "Hold Mouse (LMB)", CurrentValue = Settings.Aimbot.RequireMouseDown, Callback = function(v) Settings.Aimbot.RequireMouseDown = v end })
+TabCombat:CreateToggle({ Name = "Hysteresis", CurrentValue = Settings.Aimbot.Hysteresis, Callback = function(v) Settings.Aimbot.Hysteresis = v end })
 TabCombat:CreateSlider({ Name = "FOV", Range = { 10, 600 }, Increment = 10, CurrentValue = Settings.Aimbot.FOV, Callback = function(v) Settings.Aimbot.FOV = v end })
 TabCombat:CreateSlider({ Name = "Smoothing", Range = { 1, 20 }, Increment = 1, CurrentValue = Settings.Aimbot.Smoothing, Callback = function(v) Settings.Aimbot.Smoothing = v end })
+TabCombat:CreateSlider({ Name = "Prediction", Range = { 0, 0.5 }, Increment = 0.01, CurrentValue = Settings.Aimbot.Prediction, Callback = function(v) Settings.Aimbot.Prediction = v end })
+TabCombat:CreateSlider({ Name = "Hit Chance", Range = { 10, 100 }, Increment = 5, Suffix = "%", CurrentValue = Settings.Aimbot.HitChance, Callback = function(v) Settings.Aimbot.HitChance = v end })
+TabCombat:CreateSection("PvP Aura")
+TabCombat:CreateToggle({ Name = "Kill Aura", CurrentValue = Settings.Combat.KillAura, Callback = function(v) Settings.Combat.KillAura = v end })
+TabCombat:CreateSlider({ Name = "Aura Range", Range = { 5, 30 }, Increment = 1, CurrentValue = Settings.Combat.AuraRange, Callback = function(v) Settings.Combat.AuraRange = v end })
+TabCombat:CreateToggle({ Name = "Auto Clicker", CurrentValue = Settings.Combat.AutoClicker, Callback = function(v) Settings.Combat.AutoClicker = v end })
+TabCombat:CreateSlider({ Name = "CPS", Range = { 1, 30 }, Increment = 1, CurrentValue = Settings.Combat.CPS, Callback = function(v) Settings.Combat.CPS = v end })
 
 local TabVisuals = createTab("Visuals")
 TabVisuals:CreateSection("ESP")
@@ -951,25 +1385,37 @@ TabVisuals:CreateToggle({ Name = "Distance", CurrentValue = Settings.ESP.Distanc
 TabVisuals:CreateToggle({ Name = "Chams", CurrentValue = Settings.ESP.Chams, Callback = function(v) Settings.ESP.Chams = v end })
 TabVisuals:CreateToggle({ Name = "Only Enemies", CurrentValue = Settings.ESP.OnlyEnemies, Callback = function(v) Settings.ESP.OnlyEnemies = v end })
 TabVisuals:CreateSlider({ Name = "Max Distance", Range = { 50, 2000 }, Increment = 50, CurrentValue = Settings.ESP.MaxDistance, Callback = function(v) Settings.ESP.MaxDistance = v end })
+TabVisuals:CreateSection("World")
+TabVisuals:CreateToggle({ Name = "Fullbright", CurrentValue = Settings.Farm.Fullbright, Callback = function(v) Settings.Farm.Fullbright = v applyFullbright(v) end })
 
 local TabMovement = createTab("Movement")
-TabMovement:CreateSection("Speed")
+TabMovement:CreateSection("SpeedHack (bypass)")
 TabMovement:CreateToggle({ Name = "Speed Hack", CurrentValue = Settings.Speed.Enabled, Callback = function(v) Settings.Speed.Enabled = v end })
-TabMovement:CreateSlider({ Name = "Walk Speed", Range = { 16, 150 }, Increment = 1, CurrentValue = Settings.Speed.Value, Callback = function(v) Settings.Speed.Value = v end })
-TabMovement:CreateSection("Fly")
+TabMovement:CreateDropdown({ Name = "Speed Mode", Options = { "WalkSpeed", "Loop", "Velocity", "CFrame" }, CurrentOption = Settings.Speed.Mode, Callback = function(v) Settings.Speed.Mode = v end })
+TabMovement:CreateSlider({ Name = "Walk Speed", Range = { 16, 200 }, Increment = 1, CurrentValue = Settings.Speed.Value, Callback = function(v) Settings.Speed.Value = v end })
+TabMovement:CreateSection("Fly (antikick)")
 TabMovement:CreateToggle({ Name = "Fly", CurrentValue = Settings.Fly.Enabled, Callback = function(v) Settings.Fly.Enabled = v end })
+TabMovement:CreateDropdown({ Name = "Fly Mode", Options = { "LinearVelocity", "CFrame" }, CurrentOption = Settings.Fly.Mode, Callback = function(v) Settings.Fly.Mode = v end })
+TabMovement:CreateToggle({ Name = "Anti-Kick", CurrentValue = Settings.Fly.AntiKick, Callback = function(v) Settings.Fly.AntiKick = v if v then installKickHook() end end })
 TabMovement:CreateSlider({ Name = "Fly Speed", Range = { 20, 200 }, Increment = 5, CurrentValue = Settings.Fly.Value, Callback = function(v) Settings.Fly.Value = v end })
 TabMovement:CreateSection("Other")
 TabMovement:CreateToggle({ Name = "NoClip", CurrentValue = Settings.NoClip, Callback = function(v) Settings.NoClip = v end })
 TabMovement:CreateToggle({ Name = "Infinite Jump", CurrentValue = Settings.InfJump, Callback = function(v) Settings.InfJump = v end })
 
+local TabFarm = createTab("Farm")
+TabFarm:CreateSection("Auto Farm")
+TabFarm:CreateToggle({ Name = "Collect Aura", CurrentValue = Settings.Farm.CollectAura, Callback = function(v) Settings.Farm.CollectAura = v end })
+TabFarm:CreateSlider({ Name = "Aura Radius", Range = { 10, 100 }, Increment = 5, CurrentValue = Settings.Farm.AuraRadius, Callback = function(v) Settings.Farm.AuraRadius = v end })
+TabFarm:CreateToggle({ Name = "Anti-AFK", CurrentValue = Settings.Farm.AntiAFK, Callback = function(v) Settings.Farm.AntiAFK = v end })
+TabFarm:CreateSection("Hitbox")
+TabFarm:CreateToggle({ Name = "Hitbox Expander", CurrentValue = Settings.Hitbox.Enabled, Callback = function(v) Settings.Hitbox.Enabled = v end })
+TabFarm:CreateSlider({ Name = "Hitbox Size", Range = { 3, 25 }, Increment = 1, CurrentValue = Settings.Hitbox.Size, Callback = function(v) Settings.Hitbox.Size = v end })
+
 local TabMisc = createTab("Misc")
-TabMisc:CreateSection("Helpers")
-TabMisc:CreateToggle({ Name = "Hitbox Expander", CurrentValue = Settings.Hitbox.Enabled, Callback = function(v) Settings.Hitbox.Enabled = v end })
-TabMisc:CreateSlider({ Name = "Hitbox Size", Range = { 3, 25 }, Increment = 1, CurrentValue = Settings.Hitbox.Size, Callback = function(v) Settings.Hitbox.Size = v end })
 TabMisc:CreateSection("Info")
 TabMisc:CreateLabel("RightShift - show/hide GUI")
 TabMisc:CreateLabel("WASD + Space/Ctrl - fly")
+TabMisc:CreateLabel("Speed CFrame = stealth mode")
 TabMisc:CreateButton({ Name = "Hide GUI", Callback = function() main.Visible = false end })
 
-print("[ABYSS] Universal v2 loaded. RightShift = GUI.")
+print("[ABYSS] Universal v3 loaded — speed bypass, fly antikick, aimbot v2, aura, farm.")
