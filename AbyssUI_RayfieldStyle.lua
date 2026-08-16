@@ -2,7 +2,6 @@ local Players          = game:GetService("Players")
 local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local HttpService      = game:GetService("HttpService")
-local CoreGui          = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
 while not LocalPlayer do
@@ -33,7 +32,20 @@ local Theme = {
     Accent                  = Color3.fromRGB(0, 146, 214),
 }
 
-local Library = { Flags = {}, Interface = nil, Version = "2.0" }
+local Library = { Flags = {}, Interface = nil, Version = "2.1" }
+
+function Library:Show()
+    if self.Interface then
+        self.Interface.Enabled = true
+    end
+end
+
+function Library:Hide()
+    if self.Interface then
+        self.Interface.Enabled = false
+    end
+end
+
 local Connections = {}
 
 local function connect(signal, fn)
@@ -60,7 +72,14 @@ local function new(cls, props, parent)
             inst[key] = value
         end
     end
-    inst.Parent = parent
+
+    -- Many elements pass Parent inside props. Only override it when an
+    -- explicit third argument was supplied. This prevents us from
+    -- accidentally detaching every GUI object by assigning Parent = nil.
+    if parent ~= nil then
+        inst.Parent = parent
+    end
+
     return inst
 end
 
@@ -80,25 +99,42 @@ local function tween(obj, duration, props)
 end
 
 local function guiParent()
-    if type(gethui) == "function" then
-        local ok, target = pcall(gethui)
-        if ok and target then return target end
+    local ok, pg = pcall(function()
+        return LocalPlayer:WaitForChild("PlayerGui", 10)
+    end)
+    if ok and pg then
+        return pg
     end
-    local ok, pg = pcall(function() return LocalPlayer:WaitForChild("PlayerGui", 5) end)
-    if ok and pg then return pg end
-    return CoreGui
+
+    if type(gethui) == "function" then
+        local ok2, target = pcall(gethui)
+        if ok2 and target then
+            return target
+        end
+    end
+
+    error("AbyssUI: PlayerGui is unavailable")
 end
 
 ----------------------------------------------------------------
 -- Root gui + notifications holder
 ----------------------------------------------------------------
+local parentGui = guiParent()
+
+local oldGui = parentGui:FindFirstChild("AbyssInterface")
+if oldGui then
+    pcall(function() oldGui:Destroy() end)
+end
+
 local screenGui = new("ScreenGui", {
     Name = "AbyssInterface",
     ResetOnSpawn = false,
     IgnoreGuiInset = true,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    DisplayOrder = 999999,
+    Enabled = true,
 })
-screenGui.Parent = guiParent()
+screenGui.Parent = parentGui
 Library.Interface = screenGui
 
 local notifyHolder = new("Frame", {
